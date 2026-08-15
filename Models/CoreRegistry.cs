@@ -27,6 +27,17 @@ public static class CoreRegistry
                 assetNamePattern: CreateAssetPattern(@"\AXray-windows-64\.zip\z"),
                 executableName: "xray.exe",
                 startArgumentsFactory: static configPath => ["run", "-c", configPath]),
+            new CoreDefinition(
+                id: "mihomo",
+                displayName: "Mihomo",
+                gitHubOwner: "MetaCubeX",
+                gitHubRepository: "mihomo",
+                // Select the GOAMD64=v1 stable Windows x64 package only.  The
+                // first "v1" is Mihomo's CPU-baseline marker; the second is
+                // the release tag prefix (for example v1.19.29).
+                assetNamePattern: CreateAssetPattern(@"\Amihomo-windows-amd64-v1-v(?<version>[0-9]+(?:\.[0-9]+){2})\.zip\z"),
+                executableName: "mihomo-windows-amd64-v1.exe",
+                startArgumentsFactory: static configPath => ["-f", configPath]),
         ]);
 
     public static IReadOnlyList<CoreDefinition> All => Definitions;
