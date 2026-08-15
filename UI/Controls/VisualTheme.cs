@@ -99,6 +99,69 @@ internal sealed class FrostedGroupBox : GroupBox
 }
 
 /// <summary>
+/// A titleless version of the glass card for compact composite sections.
+/// Unlike GroupBox it reserves no header band, so neighbouring pieces can be
+/// combined into one intentionally thin surface.
+/// </summary>
+internal sealed class FrostedCardPanel : Panel
+{
+    public FrostedCardPanel()
+    {
+        SetStyle(
+            ControlStyles.AllPaintingInWmPaint |
+            ControlStyles.OptimizedDoubleBuffer |
+            ControlStyles.ResizeRedraw |
+            ControlStyles.UserPaint |
+            ControlStyles.SupportsTransparentBackColor,
+            true);
+
+        BackColor = Color.Transparent;
+        Padding = new Padding(18, 14, 18, 14);
+        Margin = new Padding(0, 0, 12, 12);
+    }
+
+    protected override void OnPaintBackground(PaintEventArgs e)
+    {
+        var background = Parent?.BackColor ?? UiPalette.Canvas;
+        using var brush = new SolidBrush(background);
+        e.Graphics.FillRectangle(brush, ClientRectangle);
+    }
+
+    protected override void OnPaint(PaintEventArgs e)
+    {
+        var bounds = ClientRectangle;
+        bounds.Inflate(-1, -1);
+        if (bounds.Width <= 1 || bounds.Height <= 1)
+        {
+            return;
+        }
+
+        e.Graphics.SmoothingMode = SmoothingMode.AntiAlias;
+        using var path = CreateRoundedPath(bounds, 18);
+        using var background = new LinearGradientBrush(
+            bounds,
+            Color.FromArgb(248, 255, 255, 255),
+            Color.FromArgb(218, 239, 245, 255),
+            LinearGradientMode.Vertical);
+        using var border = new Pen(UiPalette.CardBorder, 1F);
+        e.Graphics.FillPath(background, path);
+        e.Graphics.DrawPath(border, path);
+    }
+
+    private static GraphicsPath CreateRoundedPath(Rectangle bounds, int radius)
+    {
+        var diameter = Math.Min(Math.Min(bounds.Width, bounds.Height), radius * 2);
+        var path = new GraphicsPath();
+        path.AddArc(bounds.X, bounds.Y, diameter, diameter, 180, 90);
+        path.AddArc(bounds.Right - diameter, bounds.Y, diameter, diameter, 270, 90);
+        path.AddArc(bounds.Right - diameter, bounds.Bottom - diameter, diameter, diameter, 0, 90);
+        path.AddArc(bounds.X, bounds.Bottom - diameter, diameter, diameter, 90, 90);
+        path.CloseFigure();
+        return path;
+    }
+}
+
+/// <summary>
 /// Uses the operating system backdrop when available and silently falls back
 /// to the painted glass cards on older Windows versions.
 /// </summary>

@@ -28,6 +28,13 @@ internal sealed class AppSettings
     /// </summary>
     public ProxyMode ProxyMode { get; set; } = ProxyMode.Off;
 
+    /// <summary>
+    /// The three-position route policy shown on the home page. Existing data
+    /// files deserialize to Rules (zero) and therefore preserve legacy
+    /// behavior.
+    /// </summary>
+    public ProxyRoutingMode RoutingMode { get; set; } = ProxyRoutingMode.Rules;
+
     /// <summary>Local mixed HTTP/SOCKS listener port for generated profiles.</summary>
     public int MixedProxyPort { get; set; } = 2080;
 

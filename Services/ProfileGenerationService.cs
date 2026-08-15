@@ -36,6 +36,7 @@ internal sealed class ProfileGenerationService
         IEnumerable<RuleSet> ruleSets,
         AppSettings settings,
         bool enableTun,
+        ProxyRoutingMode routingMode,
         CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(selectedNode);
@@ -55,14 +56,32 @@ internal sealed class ProfileGenerationService
         var nodeTag = $"node-{ToSafeSegment(selectedNode.Id)}";
         outbound["tag"] = nodeTag;
 
-        var routeRules = BuildRules(ruleSets, nodeTag);
+        var routeRules = routingMode == ProxyRoutingMode.Rules
+            ? BuildRules(ruleSets, nodeTag)
+            : new JsonArray();
+        var defaultOutboundTag = routingMode == ProxyRoutingMode.Direct ? "direct" : nodeTag;
         if (enableTun)
         {
             // sing-box 1.13 removed the legacy per-inbound `sniff` fields.
             // Keep the same behavior through the supported route action.
             routeRules.Insert(0, new JsonObject { ["action"] = "sniff" });
+            // Windows strict_route blocks port 53 outside the TUN interface.
+            // Explicitly hand client DNS to sing-box, then send it through the
+            // selected node.  A direct bootstrap resolver remains available
+            // solely for resolving a domain used by that selected node.
+            routeRules.Insert(1, new JsonObject
+            {
+                ["protocol"] = "dns",
+                ["action"] = "hijack-dns",
+            });
         }
 
+        var route = new JsonObject
+        {
+            ["rules"] = routeRules,
+            ["final"] = defaultOutboundTag,
+            ["auto_detect_interface"] = true,
+        };
         var profile = new JsonObject
         {
             ["log"] = new JsonObject
@@ -89,12 +108,7 @@ internal sealed class ProfileGenerationService
                 new JsonObject { ["type"] = "block", ["tag"] = "block" },
                 outbound,
             },
-            ["route"] = new JsonObject
-            {
-                ["rules"] = routeRules,
-                ["final"] = nodeTag,
-                ["auto_detect_interface"] = true,
-            },
+            ["route"] = route,
             // Both sing-box and Mihomo expose a Clash-compatible controller;
             // this loopback controller feeds the connections/traffic pages.
             ["experimental"] = new JsonObject
@@ -108,6 +122,8 @@ internal sealed class ProfileGenerationService
 
         if (enableTun)
         {
+            profile["dns"] = BuildTunDns(routingMode == ProxyRoutingMode.Direct ? null : nodeTag);
+            route["default_domain_resolver"] = "dns-bootstrap";
             SingBoxTunConfigBuilder.AddTunInbound(profile, settings.TunInterfaceName);
         }
 
@@ -116,6 +132,37 @@ internal sealed class ProfileGenerationService
         var content = profile.ToJsonString(JsonStore.IndentedOptions);
         await WriteAtomicallyAsync(outputPath, content, cancellationToken);
         return new GeneratedProfile(outputPath, "sing-box", nodeTag, enableTun);
+    }
+
+    private static JsonObject BuildTunDns(string? selectedNodeTag)
+    {
+        var remote = new JsonObject
+        {
+            ["type"] = "udp",
+            ["tag"] = "dns-remote",
+            ["server"] = "1.1.1.1",
+            ["server_port"] = 53,
+        };
+        if (!string.IsNullOrWhiteSpace(selectedNodeTag))
+        {
+            remote["detour"] = selectedNodeTag;
+        }
+
+        return new JsonObject
+        {
+            ["servers"] = new JsonArray
+            {
+                new JsonObject
+                {
+                    ["type"] = "udp",
+                    ["tag"] = "dns-bootstrap",
+                    ["server"] = "1.1.1.1",
+                    ["server_port"] = 53,
+                },
+                remote,
+            },
+            ["final"] = "dns-remote",
+        };
     }
 
     private static JsonObject ParseOutbound(string source)

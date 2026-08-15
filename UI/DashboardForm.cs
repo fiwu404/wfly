@@ -59,11 +59,15 @@ internal sealed partial class DashboardForm : Form
     private bool _allowCloseAfterCleanup;
     private bool _trafficTickBusy;
     private bool _proxyModeTransitionBusy;
+    private bool _routingModeTransitionBusy;
     private string? _runningCoreId;
     private int? _runningMixedProxyPort;
-    private long _previousProxyUploadTotal;
-    private long _previousProxyDownloadTotal;
-    private DateTimeOffset? _previousProxyCounterAt;
+    private readonly Dictionary<string, ConnectionTrafficCounter> _previousTrafficConnections = new(StringComparer.Ordinal);
+    private DateTimeOffset? _previousTrafficCounterAt;
+    private long _proxyUploadTotal;
+    private long _proxyDownloadTotal;
+    private long _directUploadTotal;
+    private long _directDownloadTotal;
     private HashSet<string> _knownConnectionIds = new(StringComparer.Ordinal);
 
     // 首页
@@ -75,7 +79,9 @@ internal sealed partial class DashboardForm : Form
     private Label? _homeGoogleLatencyLabel;
     private Label? _homeConnectionCountLabel;
     private ProxyModeSelector? _proxyModeSelector;
+    private ProxyModeSelector? _routingModeSelector;
     private TrafficChartControl? _trafficChart;
+    private TrafficStatisticsPanel? _trafficStatistics;
 
     // 节点组 / 节点（由 partial 文件建立）
     private DataGridView? _groupGrid;
@@ -163,7 +169,10 @@ internal sealed partial class DashboardForm : Form
     {
         Text = $"WFly {ProductInfo.Version}";
         StartPosition = FormStartPosition.CenterScreen;
-        MinimumSize = new Size(1060, 690);
+        // The dashboard deliberately has no document scroll bar.  Keep a
+        // compact but real minimum height so its four live sections never
+        // collapse into one another on a user resize.
+        MinimumSize = new Size(1060, 800);
         ClientSize = new Size(1280, 820);
         AutoScaleMode = AutoScaleMode.Dpi;
         Font = new Font("Microsoft YaHei UI", 9F);
@@ -337,30 +346,79 @@ internal sealed partial class DashboardForm : Form
 
     private Control BuildHomePage()
     {
-        var root = CreateScrollablePage();
+        // The dashboard is intentionally a single responsive canvas instead
+        // of a scrolling document. Four rows share the available client area;
+        // the form minimum size keeps the compact chart and statistics table
+        // readable on smaller displays.
+        var root = new Panel
+        {
+            Dock = DockStyle.Fill,
+            AutoScroll = false,
+            BackColor = UiPalette.Canvas,
+            Padding = new Padding(2, 2, 10, 6),
+        };
         var layout = new TableLayoutPanel
         {
-            AutoSize = true,
-            AutoSizeMode = AutoSizeMode.GrowAndShrink,
-            ColumnCount = 2,
-            RowCount = 2,
-            Dock = DockStyle.Top,
-            Padding = new Padding(0, 0, 0, 18),
+            Dock = DockStyle.Fill,
+            AutoSize = false,
+            ColumnCount = 1,
+            RowCount = 4,
+            BackColor = UiPalette.Canvas,
+            Margin = Padding.Empty,
+            Padding = Padding.Empty,
         };
-        layout.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 50F));
-        layout.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 50F));
-        layout.RowStyles.Add(new RowStyle(SizeType.AutoSize));
-        layout.RowStyles.Add(new RowStyle(SizeType.AutoSize));
+        layout.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100F));
+        layout.RowStyles.Add(new RowStyle(SizeType.Absolute, 158F));
+        layout.RowStyles.Add(new RowStyle(SizeType.Absolute, 102F));
+        layout.RowStyles.Add(new RowStyle(SizeType.Percent, 47F));
+        layout.RowStyles.Add(new RowStyle(SizeType.Percent, 53F));
 
-        var overview = CreateGroup("节点信息");
+        var topCard = new FrostedCardPanel
+        {
+            AutoSize = false,
+            Dock = DockStyle.Fill,
+            Margin = new Padding(0, 0, 0, 10),
+        };
+        var topLayout = new TableLayoutPanel
+        {
+            Dock = DockStyle.Fill,
+            AutoSize = false,
+            ColumnCount = 3,
+            RowCount = 1,
+            Margin = Padding.Empty,
+            Padding = Padding.Empty,
+        };
+        topLayout.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 37F));
+        topLayout.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 1F));
+        topLayout.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 63F));
+        topLayout.RowStyles.Add(new RowStyle(SizeType.Percent, 100F));
+
+        var overview = new TableLayoutPanel
+        {
+            Dock = DockStyle.Fill,
+            AutoSize = false,
+            ColumnCount = 1,
+            RowCount = 2,
+            Margin = new Padding(0, 0, 18, 0),
+            Padding = Padding.Empty,
+        };
+        overview.RowStyles.Add(new RowStyle(SizeType.AutoSize));
+        overview.RowStyles.Add(new RowStyle(SizeType.Percent, 100F));
+        var overviewTitle = new Label
+        {
+            AutoSize = true,
+            Text = "节点信息",
+            ForeColor = UiPalette.Ink,
+            Font = new Font(Font.FontFamily, 10F, FontStyle.Bold),
+            Margin = new Padding(0, 0, 0, 4),
+        };
         var overviewLayout = new TableLayoutPanel
         {
-            Dock = DockStyle.Top,
-            AutoSize = true,
-            AutoSizeMode = AutoSizeMode.GrowAndShrink,
+            Dock = DockStyle.Fill,
+            AutoSize = false,
             ColumnCount = 2,
             RowCount = 4,
-            Padding = new Padding(10),
+            Padding = new Padding(10, 4, 10, 4),
             Margin = Padding.Empty,
         };
         overviewLayout.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
@@ -369,54 +427,134 @@ internal sealed partial class DashboardForm : Form
         _homeCoreLabel = AddValueRow(overviewLayout, "内核", 1);
         _homeRunningLabel = AddValueRow(overviewLayout, "状态", 2);
         _homeConnectionCountLabel = AddValueRow(overviewLayout, "连接", 3);
-        overview.Controls.Add(overviewLayout);
-        layout.Controls.Add(overview, 0, 0);
+        overview.Controls.Add(overviewTitle, 0, 0);
+        overview.Controls.Add(overviewLayout, 0, 1);
 
-        var modeGroup = CreateGroup("代理模式");
+        var divider = new Panel
+        {
+            Dock = DockStyle.Fill,
+            BackColor = UiPalette.CardBorder,
+            Margin = new Padding(0, 10, 0, 10),
+        };
+        var modeGroup = new TableLayoutPanel
+        {
+            Dock = DockStyle.Fill,
+            AutoSize = false,
+            ColumnCount = 2,
+            RowCount = 2,
+            Margin = new Padding(18, 0, 0, 0),
+            Padding = Padding.Empty,
+        };
+        modeGroup.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 50F));
+        modeGroup.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 50F));
+        modeGroup.RowStyles.Add(new RowStyle(SizeType.AutoSize));
+        modeGroup.RowStyles.Add(new RowStyle(SizeType.Percent, 100F));
+        var modeTitle = new Label
+        {
+            AutoSize = true,
+            Text = "代理开关",
+            ForeColor = UiPalette.Ink,
+            Font = new Font(Font.FontFamily, 10F, FontStyle.Bold),
+            Margin = new Padding(0, 0, 0, 8),
+        };
         var modeLayout = new TableLayoutPanel
         {
-            Dock = DockStyle.Top,
-            AutoSize = true,
-            AutoSizeMode = AutoSizeMode.GrowAndShrink,
+            Dock = DockStyle.Fill,
+            AutoSize = false,
             ColumnCount = 1,
             RowCount = 1,
-            Padding = new Padding(10),
+            Padding = new Padding(4, 0, 4, 0),
             Margin = Padding.Empty,
         };
-        _proxyModeSelector = new ProxyModeSelector { Dock = DockStyle.Top, BackColor = UiPalette.Card, ForeColor = UiPalette.Ink };
+        _proxyModeSelector = new ProxyModeSelector
+        {
+            Dock = DockStyle.Fill,
+            BackColor = UiPalette.Card,
+            ForeColor = UiPalette.Ink,
+            Labels = ["系统代理", "关闭代理", "TUN 模式"],
+        };
         _proxyModeSelector.ModeChanged += async (_, _) => await HandleProxyModeChangedAsync();
         modeLayout.Controls.Add(_proxyModeSelector, 0, 0);
-        modeGroup.Controls.Add(modeLayout);
-        layout.Controls.Add(modeGroup, 1, 0);
-
-        var egress = CreateGroup("IP 出口检测与真实延迟");
-        var egressLayout = new TableLayoutPanel
+        var routingTitle = new Label
         {
-            Dock = DockStyle.Top,
             AutoSize = true,
-            AutoSizeMode = AutoSizeMode.GrowAndShrink,
-            ColumnCount = 2,
-            RowCount = 4,
-            Padding = new Padding(10),
+            Text = "代理规则",
+            ForeColor = UiPalette.Ink,
+            Font = new Font(Font.FontFamily, 10F, FontStyle.Bold),
+            Margin = new Padding(0, 0, 0, 8),
+        };
+        var routingLayout = new TableLayoutPanel
+        {
+            Dock = DockStyle.Fill,
+            AutoSize = false,
+            ColumnCount = 1,
+            RowCount = 1,
+            Padding = new Padding(4, 0, 4, 0),
             Margin = Padding.Empty,
         };
-        egressLayout.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
-        egressLayout.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100F));
-        _homeIpLabel = AddValueRow(egressLayout, "出口 IP", 0);
-        _homeIpTypeLabel = AddValueRow(egressLayout, "IP 类型", 1);
-        _homeGoogleLatencyLabel = AddValueRow(egressLayout, "Google", 2);
+        _routingModeSelector = new ProxyModeSelector
+        {
+            Dock = DockStyle.Fill,
+            BackColor = UiPalette.Card,
+            ForeColor = UiPalette.Ink,
+            Labels = ["规则", "全局", "直连"],
+        };
+        _routingModeSelector.SelectedIndexChanged += async (_, _) => await HandleRoutingModeChangedAsync();
+        routingLayout.Controls.Add(_routingModeSelector, 0, 0);
+        modeGroup.Controls.Add(modeTitle, 0, 0);
+        modeGroup.Controls.Add(routingTitle, 1, 0);
+        modeGroup.Controls.Add(modeLayout, 0, 1);
+        modeGroup.Controls.Add(routingLayout, 1, 1);
+        topLayout.Controls.Add(overview, 0, 0);
+        topLayout.Controls.Add(divider, 1, 0);
+        topLayout.Controls.Add(modeGroup, 2, 0);
+        topCard.Controls.Add(topLayout);
+        layout.Controls.Add(topCard, 0, 0);
+
+        var egress = CreateGroup("IP 出口检测与真实延迟");
+        egress.AutoSize = false;
+        egress.Dock = DockStyle.Fill;
+        egress.Margin = new Padding(0, 0, 0, 10);
+        var egressLayout = new TableLayoutPanel
+        {
+            Dock = DockStyle.Fill,
+            ColumnCount = 4,
+            RowCount = 1,
+            Padding = new Padding(10, 4, 10, 4),
+            Margin = Padding.Empty,
+        };
+        egressLayout.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 22F));
+        egressLayout.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 42F));
+        egressLayout.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 22F));
+        egressLayout.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 116F));
+        egressLayout.RowStyles.Add(new RowStyle(SizeType.Percent, 100F));
+        egressLayout.Controls.Add(CreateInlineValue("出口 IP", out _homeIpLabel), 0, 0);
+        egressLayout.Controls.Add(CreateInlineValue("IP 类型", out _homeIpTypeLabel), 1, 0);
+        egressLayout.Controls.Add(CreateInlineValue("Google", out _homeGoogleLatencyLabel), 2, 0);
         var checkEgressButton = CreateSecondaryButton("检测");
-        checkEgressButton.Anchor = AnchorStyles.Left;
+        checkEgressButton.Anchor = AnchorStyles.None;
         checkEgressButton.Click += async (_, _) => await CheckEgressAsync();
-        egressLayout.Controls.Add(checkEgressButton, 1, 3);
+        egressLayout.Controls.Add(checkEgressButton, 3, 0);
         egress.Controls.Add(egressLayout);
         layout.Controls.Add(egress, 0, 1);
 
         var trafficGroup = CreateGroup("实时流量");
-        _trafficChart = new TrafficChartControl { Dock = DockStyle.Fill, Margin = new Padding(8), BackColor = UiPalette.Card };
+        trafficGroup.AutoSize = false;
+        trafficGroup.Dock = DockStyle.Fill;
+        trafficGroup.Margin = Padding.Empty;
+        _trafficChart = new TrafficChartControl { Dock = DockStyle.Fill, Margin = Padding.Empty, BackColor = UiPalette.Card };
         trafficGroup.Controls.Add(_trafficChart);
-        trafficGroup.MinimumSize = new Size(300, 330);
-        layout.Controls.Add(trafficGroup, 1, 1);
+        layout.Controls.Add(trafficGroup, 0, 2);
+
+        var statisticsCard = new FrostedCardPanel
+        {
+            AutoSize = false,
+            Dock = DockStyle.Fill,
+            Margin = Padding.Empty,
+        };
+        _trafficStatistics = new TrafficStatisticsPanel { Dock = DockStyle.Fill };
+        statisticsCard.Controls.Add(_trafficStatistics);
+        layout.Controls.Add(statisticsCard, 0, 3);
 
         root.Controls.Add(layout);
         return root;
@@ -764,7 +902,80 @@ internal sealed partial class DashboardForm : Form
 
         if (_proxyModeSelector is not null)
         {
-            _proxyModeSelector.Enabled = !_operationBusy && !_proxyModeTransitionBusy;
+            _proxyModeSelector.Enabled = !_operationBusy && !_proxyModeTransitionBusy && !_routingModeTransitionBusy;
+        }
+
+        if (_routingModeSelector is not null)
+        {
+            if (_routingModeSelector.SelectedIndex != (int)_settings.RoutingMode)
+            {
+                _routingModeSelector.SelectedIndex = (int)_settings.RoutingMode;
+            }
+
+            _routingModeSelector.Enabled = !_operationBusy && !_proxyModeTransitionBusy && !_routingModeTransitionBusy;
+        }
+    }
+
+    private async Task HandleRoutingModeChangedAsync()
+    {
+        if (_isLoading ||
+            _routingModeTransitionBusy ||
+            _routingModeSelector is null)
+        {
+            return;
+        }
+
+        var selectedMode = (ProxyRoutingMode)_routingModeSelector.SelectedIndex;
+        if (selectedMode == _settings.RoutingMode)
+        {
+            return;
+        }
+
+        var previousMode = _settings.RoutingMode;
+        _routingModeTransitionBusy = true;
+        try
+        {
+            if (_processService.IsRunning &&
+                !string.Equals(_runningCoreId, "sing-box", StringComparison.OrdinalIgnoreCase))
+            {
+                throw new NotSupportedException("代理规则滑轨当前只会重生成 sing-box 配置。请停止 Mihomo 或 Xray-core 后切换规则。");
+            }
+
+            _settings.RoutingMode = selectedMode;
+            await _settingsStore.SaveAsync(_settings);
+
+            if (_processService.IsRunning)
+            {
+                var stopped = await StopRunningCoreAsync();
+                if (!stopped || _processService.IsRunning || _settings.SystemProxyLease is not null)
+                {
+                    throw new InvalidOperationException("无法安全停止当前内核，因此没有切换代理规则。");
+                }
+
+                await StartSelectedNodeAsync();
+                if (!_processService.IsRunning)
+                {
+                    throw new InvalidOperationException("新代理规则配置未能启动内核。");
+                }
+            }
+
+            PostLog("SYS", $"代理规则已切换为：{GetRoutingModeDisplay(selectedMode)}。");
+        }
+        catch (Exception exception)
+        {
+            _settings.RoutingMode = previousMode;
+            if (_routingModeSelector.SelectedIndex != (int)previousMode)
+            {
+                _routingModeSelector.SelectedIndex = (int)previousMode;
+            }
+
+            await _settingsStore.SaveAsync(_settings);
+            ShowError("无法切换代理规则", exception);
+        }
+        finally
+        {
+            _routingModeTransitionBusy = false;
+            RefreshHomePage();
         }
     }
 
@@ -1032,54 +1243,174 @@ internal sealed partial class DashboardForm : Form
         _trafficTickBusy = true;
         try
         {
-            var hostRate = _networkTrafficSampler.Sample();
-            var proxyUploadRate = 0L;
-            var proxyDownloadRate = 0L;
-            var activeConnections = 0;
+            var capturedAt = _networkTrafficSampler.Sample().CapturedAt;
+            var breakdown = CoreTrafficBreakdown.Empty;
+            var hasControllerCounters = false;
             try
             {
                 var connections = await _clashApiClient.TryGetConnectionsAsync(9090);
                 if (connections is not null)
                 {
-                    activeConnections = connections.Connections.Count;
+                    hasControllerCounters = true;
                     CaptureConnectionLogs(connections);
-                    if (_previousProxyCounterAt is { } previousAt)
-                    {
-                        var seconds = Math.Max(0.25, (hostRate.CapturedAt - previousAt).TotalSeconds);
-                        proxyUploadRate = Math.Max(0, (long)((connections.UploadTotal - _previousProxyUploadTotal) / seconds));
-                        proxyDownloadRate = Math.Max(0, (long)((connections.DownloadTotal - _previousProxyDownloadTotal) / seconds));
-                    }
-
-                    _previousProxyUploadTotal = connections.UploadTotal;
-                    _previousProxyDownloadTotal = connections.DownloadTotal;
-                    _previousProxyCounterAt = hostRate.CapturedAt;
+                    breakdown = SampleCoreTraffic(connections, capturedAt);
                 }
             }
             catch (Exception exception) when (exception is HttpRequestException or TaskCanceledException or InvalidDataException or JsonException)
             {
-                // A controller is optional. The chart continues with real host
-                // counters while leaving unavailable proxy curves at zero.
+                ResetTrafficCounterBaseline();
             }
 
             var sample = new TrafficChartSample(
-                hostRate.CapturedAt,
-                proxyUploadRate,
-                proxyDownloadRate,
-                Math.Max(0, hostRate.UploadBytesPerSecond - proxyUploadRate),
-                Math.Max(0, hostRate.DownloadBytesPerSecond - proxyDownloadRate));
+                capturedAt,
+                breakdown.ProxyUploadBytesPerSecond,
+                breakdown.ProxyDownloadBytesPerSecond,
+                breakdown.DirectUploadBytesPerSecond,
+                breakdown.DirectDownloadBytesPerSecond);
             if (!IsDisposed && _trafficChart.IsHandleCreated)
             {
                 _trafficChart.Append(sample);
                 if (_homeConnectionCountLabel is not null)
                 {
-                    _homeConnectionCountLabel.Text = activeConnections > 0 ? $"{activeConnections} 个活动连接" : "0 个活动连接";
+                    _homeConnectionCountLabel.Text = hasControllerCounters
+                        ? $"{breakdown.TotalActiveConnections} 个活动连接"
+                        : "等待控制器数据";
                 }
+
+                _trafficStatistics?.SetSnapshot(new TrafficStatisticsSnapshot(
+                    capturedAt,
+                    hasControllerCounters ? breakdown.ProxyUploadBytesPerSecond : null,
+                    hasControllerCounters ? breakdown.ProxyDownloadBytesPerSecond : null,
+                    hasControllerCounters ? breakdown.ProxyActiveConnections : null,
+                    hasControllerCounters ? _proxyUploadTotal : null,
+                    hasControllerCounters ? _proxyDownloadTotal : null,
+                    hasControllerCounters ? breakdown.DirectUploadBytesPerSecond : null,
+                    hasControllerCounters ? breakdown.DirectDownloadBytesPerSecond : null,
+                    hasControllerCounters ? breakdown.DirectActiveConnections : null,
+                    hasControllerCounters ? _directUploadTotal : null,
+                    hasControllerCounters ? _directDownloadTotal : null));
             }
         }
         finally
         {
             _trafficTickBusy = false;
         }
+    }
+
+    private CoreTrafficBreakdown SampleCoreTraffic(ClashConnectionsSnapshot snapshot, DateTimeOffset capturedAt)
+    {
+        var seconds = _previousTrafficCounterAt is { } previous
+            ? Math.Max(0.25D, (capturedAt - previous).TotalSeconds)
+            : 0D;
+        var current = new Dictionary<string, ConnectionTrafficCounter>(StringComparer.Ordinal);
+        long proxyUploadDelta = 0;
+        long proxyDownloadDelta = 0;
+        long directUploadDelta = 0;
+        long directDownloadDelta = 0;
+        var proxyConnections = 0;
+        var directConnections = 0;
+
+        foreach (var connection in snapshot.Connections)
+        {
+            var isDirect = connection.UsesDirectOutbound;
+            if (isDirect)
+            {
+                directConnections++;
+            }
+            else
+            {
+                proxyConnections++;
+            }
+
+            if (string.IsNullOrWhiteSpace(connection.Id))
+            {
+                continue;
+            }
+
+            current[connection.Id] = new ConnectionTrafficCounter(connection.UploadBytes, connection.DownloadBytes);
+            if (!_previousTrafficConnections.TryGetValue(connection.Id, out var previousCounter))
+            {
+                continue;
+            }
+
+            var uploadDelta = Math.Max(0L, connection.UploadBytes - previousCounter.UploadBytes);
+            var downloadDelta = Math.Max(0L, connection.DownloadBytes - previousCounter.DownloadBytes);
+            if (isDirect)
+            {
+                directUploadDelta += uploadDelta;
+                directDownloadDelta += downloadDelta;
+            }
+            else
+            {
+                proxyUploadDelta += uploadDelta;
+                proxyDownloadDelta += downloadDelta;
+            }
+        }
+
+        _previousTrafficConnections.Clear();
+        foreach (var (id, counter) in current)
+        {
+            _previousTrafficConnections[id] = counter;
+        }
+
+        _previousTrafficCounterAt = capturedAt;
+        _proxyUploadTotal = AddTrafficIncrement(_proxyUploadTotal, proxyUploadDelta, 1D);
+        _proxyDownloadTotal = AddTrafficIncrement(_proxyDownloadTotal, proxyDownloadDelta, 1D);
+        _directUploadTotal = AddTrafficIncrement(_directUploadTotal, directUploadDelta, 1D);
+        _directDownloadTotal = AddTrafficIncrement(_directDownloadTotal, directDownloadDelta, 1D);
+
+        return new CoreTrafficBreakdown(
+            seconds <= 0 ? 0L : (long)(proxyUploadDelta / seconds),
+            seconds <= 0 ? 0L : (long)(proxyDownloadDelta / seconds),
+            proxyConnections,
+            seconds <= 0 ? 0L : (long)(directUploadDelta / seconds),
+            seconds <= 0 ? 0L : (long)(directDownloadDelta / seconds),
+            directConnections);
+    }
+
+    private void ResetTrafficCounterBaseline()
+    {
+        _previousTrafficConnections.Clear();
+        _previousTrafficCounterAt = null;
+    }
+
+    private void ResetTrafficStatistics()
+    {
+        ResetTrafficCounterBaseline();
+        _proxyUploadTotal = 0;
+        _proxyDownloadTotal = 0;
+        _directUploadTotal = 0;
+        _directDownloadTotal = 0;
+        _trafficChart?.Clear();
+        _trafficStatistics?.ClearSnapshot();
+    }
+
+    private static long AddTrafficIncrement(long total, long increment, double multiplier)
+    {
+        if (total == long.MaxValue || increment <= 0 || multiplier <= 0)
+        {
+            return total;
+        }
+
+        var scaled = Math.Min((double)long.MaxValue, increment * multiplier);
+        return scaled >= long.MaxValue - total
+            ? long.MaxValue
+            : total + (long)scaled;
+    }
+
+    private sealed record ConnectionTrafficCounter(long UploadBytes, long DownloadBytes);
+
+    private sealed record CoreTrafficBreakdown(
+        long ProxyUploadBytesPerSecond,
+        long ProxyDownloadBytesPerSecond,
+        int ProxyActiveConnections,
+        long DirectUploadBytesPerSecond,
+        long DirectDownloadBytesPerSecond,
+        int DirectActiveConnections)
+    {
+        public static CoreTrafficBreakdown Empty { get; } = new(0, 0, 0, 0, 0, 0);
+
+        public int TotalActiveConnections => ProxyActiveConnections + DirectActiveConnections;
     }
 
     private async Task RefreshConnectionsAsync()
@@ -1395,6 +1726,7 @@ internal sealed partial class DashboardForm : Form
                     _ruleSets,
                     _settings,
                     _settings.ProxyMode == ProxyMode.Tun,
+                    _settings.RoutingMode,
                     cancellationToken);
                 configurationPath = profile.Path;
                 await ConfigValidator.ValidateAsync(configurationPath, cancellationToken);
@@ -1424,6 +1756,7 @@ internal sealed partial class DashboardForm : Form
                 : null;
             try
             {
+                ResetTrafficStatistics();
                 await _processService.StartAsync(installed.ExecutablePath, definition.BuildStartArguments(configurationPath), cancellationToken);
                 if (!_processService.IsRunning)
                 {
@@ -1733,6 +2066,11 @@ internal sealed partial class DashboardForm : Form
                     return;
                 }
 
+                if (!isRunning)
+                {
+                    ResetTrafficCounterBaseline();
+                }
+
                 SetStatus(isRunning ? "内核正在运行。" : "内核已停止。");
                 if (!isRunning && !_proxyModeTransitionBusy && !_closeCleanupInProgress)
                 {
@@ -1995,12 +2333,65 @@ internal sealed partial class DashboardForm : Form
 
     private static Label AddValueRow(TableLayoutPanel layout, string label, int row)
     {
-        layout.RowStyles.Add(new RowStyle(SizeType.AutoSize));
-        var key = new Label { AutoSize = true, Text = label, ForeColor = UiPalette.MutedInk, Anchor = AnchorStyles.Left, Margin = new Padding(0, 5, 12, 5) };
-        var value = new Label { AutoSize = true, Text = "—", Anchor = AnchorStyles.Left, Margin = new Padding(0, 5, 0, 5), MaximumSize = new Size(330, 0) };
+        layout.RowStyles.Add(new RowStyle(SizeType.Percent, 25F));
+        var key = new Label
+        {
+            AutoSize = true,
+            Text = label,
+            ForeColor = UiPalette.MutedInk,
+            Anchor = AnchorStyles.Left,
+            Margin = new Padding(0, 0, 12, 0),
+        };
+        var value = new Label
+        {
+            AutoSize = false,
+            Dock = DockStyle.Fill,
+            Text = "—",
+            TextAlign = ContentAlignment.MiddleLeft,
+            AutoEllipsis = true,
+            Margin = Padding.Empty,
+        };
         layout.Controls.Add(key, 0, row);
         layout.Controls.Add(value, 1, row);
         return value;
+    }
+
+    /// <summary>Builds one compact field for the single-row egress card.</summary>
+    private static Control CreateInlineValue(string label, out Label value)
+    {
+        var field = new TableLayoutPanel
+        {
+            Dock = DockStyle.Fill,
+            ColumnCount = 2,
+            RowCount = 1,
+            Margin = new Padding(0, 0, 12, 0),
+            Padding = Padding.Empty,
+        };
+        field.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
+        field.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100F));
+        field.RowStyles.Add(new RowStyle(SizeType.Percent, 100F));
+
+        var key = new Label
+        {
+            AutoSize = true,
+            Text = label,
+            ForeColor = UiPalette.MutedInk,
+            Anchor = AnchorStyles.Left,
+            Margin = new Padding(0, 0, 10, 0),
+        };
+        value = new Label
+        {
+            Dock = DockStyle.Fill,
+            Text = "—",
+            ForeColor = UiPalette.Ink,
+            Font = new Font("Microsoft YaHei UI", 9F, FontStyle.Bold),
+            TextAlign = ContentAlignment.MiddleLeft,
+            AutoEllipsis = true,
+            Margin = Padding.Empty,
+        };
+        field.Controls.Add(key, 0, 0);
+        field.Controls.Add(value, 1, 0);
+        return field;
     }
 
     private static Label CreateSettingsLabel(string text) => new()
@@ -2107,6 +2498,13 @@ internal sealed partial class DashboardForm : Form
         ProxyMode.SystemProxy => "系统代理",
         ProxyMode.Tun => "TUN 模式",
         _ => "关闭代理",
+    };
+
+    private static string GetRoutingModeDisplay(ProxyRoutingMode mode) => mode switch
+    {
+        ProxyRoutingMode.Global => "全局",
+        ProxyRoutingMode.Direct => "直连",
+        _ => "规则",
     };
 }
 

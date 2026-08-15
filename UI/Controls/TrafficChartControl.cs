@@ -31,7 +31,7 @@ internal sealed class TrafficChartControl : Control
             ControlStyles.UserPaint,
             true);
         BackColor = Color.White;
-        MinimumSize = new Size(280, 190);
+        MinimumSize = new Size(280, 130);
     }
 
     [Browsable(false)]

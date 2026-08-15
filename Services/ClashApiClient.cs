@@ -57,6 +57,11 @@ internal sealed class ClashApiClient
         var chains = item.TryGetProperty("chains", out var chainArray) && chainArray.ValueKind == JsonValueKind.Array
             ? string.Join(" → ", chainArray.EnumerateArray().Select(static chain => chain.GetString()).Where(static chain => !string.IsNullOrWhiteSpace(chain)))
             : string.Empty;
+        var usesDirectOutbound = item.TryGetProperty("chains", out var directChainArray) &&
+            directChainArray.ValueKind == JsonValueKind.Array &&
+            directChainArray.EnumerateArray()
+                .Select(static chain => chain.GetString())
+                .Any(static tag => string.Equals(tag, "direct", StringComparison.OrdinalIgnoreCase));
         return new ClashConnectionInfo(
             ReadString(item, "id") ?? string.Empty,
             host,
@@ -67,7 +72,8 @@ internal sealed class ClashApiClient
             chains,
             ReadInt64(item, "upload"),
             ReadInt64(item, "download"),
-            ReadString(item, "start") ?? string.Empty);
+            ReadString(item, "start") ?? string.Empty,
+            usesDirectOutbound);
     }
 
     private static async Task<JsonDocument> ParseLimitedAsync(Stream stream, CancellationToken cancellationToken)
@@ -140,4 +146,5 @@ internal sealed record ClashConnectionInfo(
     string Chains,
     long UploadBytes,
     long DownloadBytes,
-    string StartedAt);
+    string StartedAt,
+    bool UsesDirectOutbound);
