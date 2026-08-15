@@ -73,6 +73,7 @@ internal sealed partial class DashboardForm
         ruleActions.Controls.Add(saveGraphical);
         graphicalRoot.Controls.Add(ruleActions, 0, 0);
         _ruleGrid = CreateGrid();
+        _ruleGrid.Dock = DockStyle.Fill;
         _ruleGrid.Columns.Add("Name", "规则");
         _ruleGrid.Columns.Add("MatchKind", "匹配类型");
         _ruleGrid.Columns.Add("MatchValue", "匹配值");

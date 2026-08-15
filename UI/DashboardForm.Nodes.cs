@@ -9,7 +9,8 @@ internal sealed partial class DashboardForm
     private Control BuildNodeGroupsPage()
     {
         var root = CreateScrollablePage();
-        root.Controls.Add(CreatePageHeader("节点组"));
+        var content = CreateVerticalPageLayout();
+        AddPageRow(content, CreatePageHeader("节点组"));
 
         var actions = new FlowLayoutPanel { AutoSize = true, Margin = new Padding(0, 0, 0, 10), BackColor = UiPalette.Canvas };
         var add = CreatePrimaryButton("新建节点组");
@@ -24,7 +25,7 @@ internal sealed partial class DashboardForm
         actions.Controls.Add(edit);
         actions.Controls.Add(update);
         actions.Controls.Add(delete);
-        root.Controls.Add(actions);
+        AddPageRow(content, actions);
 
         _groupGrid = CreateGrid();
         _groupGrid.Columns.Add("Name", "节点组");
@@ -35,21 +36,23 @@ internal sealed partial class DashboardForm
         _groupGrid.Columns.Add("Status", "状态");
         _groupGrid.Height = 500;
         _groupGrid.SelectionChanged += async (_, _) => await SelectGroupFromGridAsync();
-        root.Controls.Add(_groupGrid);
+        AddPageRow(content, _groupGrid, 500);
+        root.Controls.Add(content);
         return root;
     }
 
     private Control BuildNodesPage()
     {
         var root = CreateScrollablePage();
-        root.Controls.Add(CreatePageHeader("节点"));
+        var content = CreateVerticalPageLayout();
+        AddPageRow(content, CreatePageHeader("节点"));
 
         var groupPanel = new FlowLayoutPanel { AutoSize = true, Margin = new Padding(0, 0, 0, 10), BackColor = UiPalette.Canvas };
         groupPanel.Controls.Add(new Label { Text = "节点组", AutoSize = true, Padding = new Padding(0, 7, 8, 0) });
         _nodeGroupSelector = new ComboBox { DropDownStyle = ComboBoxStyle.DropDownList, Width = 260 };
         _nodeGroupSelector.SelectedIndexChanged += async (_, _) => await SelectGroupFromNodeSelectorAsync();
         groupPanel.Controls.Add(_nodeGroupSelector);
-        root.Controls.Add(groupPanel);
+        AddPageRow(content, groupPanel);
 
         var actions = new FlowLayoutPanel { AutoSize = true, Margin = new Padding(0, 0, 0, 10), BackColor = UiPalette.Canvas };
         var add = CreatePrimaryButton("添加节点");
@@ -64,7 +67,7 @@ internal sealed partial class DashboardForm
         actions.Controls.Add(edit);
         actions.Controls.Add(toggle);
         actions.Controls.Add(delete);
-        root.Controls.Add(actions);
+        AddPageRow(content, actions);
 
         _nodeGrid = CreateGrid();
         _nodeGrid.Columns.Add("Name", "节点");
@@ -74,7 +77,8 @@ internal sealed partial class DashboardForm
         _nodeGrid.Columns.Add("Updated", "更新时间");
         _nodeGrid.Height = 500;
         _nodeGrid.SelectionChanged += async (_, _) => await SelectNodeFromGridAsync();
-        root.Controls.Add(_nodeGrid);
+        AddPageRow(content, _nodeGrid, 500);
+        root.Controls.Add(content);
         return root;
     }
 

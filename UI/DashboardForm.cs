@@ -351,6 +351,8 @@ internal sealed partial class DashboardForm : Form
         };
         layout.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 50F));
         layout.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 50F));
+        layout.RowStyles.Add(new RowStyle(SizeType.AutoSize));
+        layout.RowStyles.Add(new RowStyle(SizeType.AutoSize));
 
         var overview = CreateGroup("节点信息");
         var overviewLayout = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 2, RowCount = 4, Padding = new Padding(10) };
@@ -398,12 +400,13 @@ internal sealed partial class DashboardForm : Form
     private Control BuildConnectionsPage()
     {
         var root = CreateScrollablePage();
+        var content = CreateVerticalPageLayout();
         var header = CreatePageHeader("运行中的连接");
-        root.Controls.Add(header);
+        AddPageRow(content, header);
         var refresh = CreateSecondaryButton("刷新连接");
         refresh.Margin = new Padding(0, 0, 0, 10);
         refresh.Click += async (_, _) => await RefreshConnectionsAsync();
-        root.Controls.Add(refresh);
+        AddPageRow(content, refresh);
         _connectionGrid = CreateGrid();
         _connectionGrid.Columns.Add("Host", "主机");
         _connectionGrid.Columns.Add("Port", "端口");
@@ -415,14 +418,16 @@ internal sealed partial class DashboardForm : Form
         _connectionGrid.Columns.Add("Download", "下载");
         _connectionGrid.Columns.Add("Started", "开始时间");
         _connectionGrid.Height = 510;
-        root.Controls.Add(_connectionGrid);
+        AddPageRow(content, _connectionGrid, 510);
+        root.Controls.Add(content);
         return root;
     }
 
     private Control BuildLogsPage()
     {
         var root = CreateScrollablePage();
-        root.Controls.Add(CreatePageHeader("日志"));
+        var content = CreateVerticalPageLayout();
+        AddPageRow(content, CreatePageHeader("日志"));
         var actions = new FlowLayoutPanel { AutoSize = true, Margin = new Padding(0, 0, 0, 10) };
         var exportButton = CreateSecondaryButton("导出日志");
         exportButton.Click += async (_, _) => await ExportLogsAsync();
@@ -437,7 +442,7 @@ internal sealed partial class DashboardForm : Form
         };
         actions.Controls.Add(exportButton);
         actions.Controls.Add(clearButton);
-        root.Controls.Add(actions);
+        AddPageRow(content, actions);
         _logBox = new RichTextBox
         {
             Dock = DockStyle.Top,
@@ -449,7 +454,8 @@ internal sealed partial class DashboardForm : Form
             Font = new Font("Cascadia Mono", 9F),
             BorderStyle = BorderStyle.FixedSingle,
         };
-        root.Controls.Add(_logBox);
+        AddPageRow(content, _logBox, 520);
+        root.Controls.Add(content);
         RenderLogs();
         return root;
     }
@@ -457,14 +463,15 @@ internal sealed partial class DashboardForm : Form
     private Control BuildTestsPage()
     {
         var root = CreateScrollablePage();
-        root.Controls.Add(CreatePageHeader("测试"));
+        var content = CreateVerticalPageLayout();
+        AddPageRow(content, CreatePageHeader("测试"));
         var controls = new FlowLayoutPanel { AutoSize = true, Margin = new Padding(0, 0, 0, 10) };
         var throughProxy = new CheckBox { Text = "通过本地代理", Checked = true, AutoSize = true, Padding = new Padding(0, 6, 8, 0) };
         var runButton = CreatePrimaryButton("开始延迟测试");
         runButton.Click += async (_, _) => await RunSiteLatencyTestsAsync(throughProxy.Checked);
         controls.Controls.Add(throughProxy);
         controls.Controls.Add(runButton);
-        root.Controls.Add(controls);
+        AddPageRow(content, controls);
         _testGrid = CreateGrid();
         _testGrid.Columns.Add("Name", "站点");
         _testGrid.Columns.Add("Host", "主机");
@@ -477,7 +484,8 @@ internal sealed partial class DashboardForm : Form
         }
 
         _testGrid.Height = 410;
-        root.Controls.Add(_testGrid);
+        AddPageRow(content, _testGrid, 410);
+        root.Controls.Add(content);
         return root;
     }
 
@@ -1799,6 +1807,39 @@ internal sealed partial class DashboardForm : Form
         BackColor = UiPalette.Canvas,
         Padding = new Padding(2, 2, 10, 16),
     };
+
+    /// <summary>
+    /// A real vertical layout surface for simple pages.  A plain scrolling
+    /// Panel gives every non-docked child the default (0, 0) position, which
+    /// was the cause of title/filter/action overlap on the node pages.
+    /// </summary>
+    private static TableLayoutPanel CreateVerticalPageLayout()
+    {
+        var layout = new TableLayoutPanel
+        {
+            AutoSize = true,
+            AutoSizeMode = AutoSizeMode.GrowAndShrink,
+            Dock = DockStyle.Top,
+            ColumnCount = 1,
+            RowCount = 0,
+            BackColor = UiPalette.Canvas,
+            Margin = Padding.Empty,
+            Padding = Padding.Empty,
+        };
+        layout.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100F));
+        return layout;
+    }
+
+    private static void AddPageRow(TableLayoutPanel layout, Control control, int? fixedHeight = null)
+    {
+        var row = layout.RowCount;
+        layout.RowCount++;
+        layout.RowStyles.Add(fixedHeight is { } height
+            ? new RowStyle(SizeType.Absolute, height)
+            : new RowStyle(SizeType.AutoSize));
+        control.Dock = fixedHeight.HasValue ? DockStyle.Fill : DockStyle.Top;
+        layout.Controls.Add(control, 0, row);
+    }
 
     private static FrostedGroupBox CreateGroup(string title) => new()
     {
