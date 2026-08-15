@@ -55,6 +55,14 @@ internal sealed class ProfileGenerationService
         var nodeTag = $"node-{ToSafeSegment(selectedNode.Id)}";
         outbound["tag"] = nodeTag;
 
+        var routeRules = BuildRules(ruleSets, nodeTag);
+        if (enableTun)
+        {
+            // sing-box 1.13 removed the legacy per-inbound `sniff` fields.
+            // Keep the same behavior through the supported route action.
+            routeRules.Insert(0, new JsonObject { ["action"] = "sniff" });
+        }
+
         var profile = new JsonObject
         {
             ["log"] = new JsonObject
@@ -83,7 +91,7 @@ internal sealed class ProfileGenerationService
             },
             ["route"] = new JsonObject
             {
-                ["rules"] = BuildRules(ruleSets, nodeTag),
+                ["rules"] = routeRules,
                 ["final"] = nodeTag,
                 ["auto_detect_interface"] = true,
             },

@@ -166,7 +166,6 @@ internal sealed class SingBoxTunConfigBuilder
             ["auto_route"] = options.AutoRoute,
             ["strict_route"] = options.StrictRoute,
             ["stack"] = options.Stack,
-            ["sniff"] = options.Sniff,
         };
 
         inbounds.Add(tunInbound);
@@ -330,7 +329,6 @@ internal sealed class SingBoxTunOptions
     public bool AutoRoute { get; init; } = true;
     public bool StrictRoute { get; init; } = true;
     public string Stack { get; init; } = "system";
-    public bool Sniff { get; init; } = true;
 }
 
 internal sealed record SingBoxTunBuildResult(bool Succeeded, string? ConfigJson, string? ErrorMessage)
