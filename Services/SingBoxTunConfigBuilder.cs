@@ -39,7 +39,7 @@ internal sealed class SingBoxTunConfigBuilder
             options);
         if (!result.Succeeded || string.IsNullOrWhiteSpace(result.ConfigJson))
         {
-            throw new InvalidOperationException(result.ErrorMessage ?? "Unable to add the sing-box TUN inbound.");
+            throw new InvalidOperationException(result.ErrorMessage ?? "无法添加 sing-box TUN 入站配置。");
         }
 
         var updated = JsonNode.Parse(result.ConfigJson)?.AsObject()
@@ -78,13 +78,13 @@ internal sealed class SingBoxTunConfigBuilder
     {
         if (!OperatingSystem.IsWindows())
         {
-            return SingBoxTunBuildResult.Failure("TUN mode is only available in the Windows build.");
+            return SingBoxTunBuildResult.Failure("TUN 模式仅可在 Windows 版本中使用。");
         }
 
         if (!IsAdministrator())
         {
             return SingBoxTunBuildResult.Failure(
-                "TUN mode needs an elevated Windows process. WFly will not request elevation automatically.");
+                "TUN 模式需要管理员权限。请确认 Windows 的管理员授权提示后重试。");
         }
 
         if (string.IsNullOrWhiteSpace(singBoxConfigJson))

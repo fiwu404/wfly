@@ -9,6 +9,9 @@ internal static class Program
     private static void Main()
     {
         ApplicationConfiguration.Initialize();
+        var resumeTunAfterElevation = Environment.GetCommandLineArgs()
+            .Skip(1)
+            .Any(argument => string.Equals(argument, "--resume-tun", StringComparison.Ordinal));
 
         var paths = new AppPaths();
         paths.EnsureDirectories();
@@ -46,6 +49,7 @@ internal static class Program
             networkDiagnosticsService,
             siteLatencyTestService,
             clashApiClient,
-            systemProxyService));
+            systemProxyService,
+            resumeTunAfterElevation));
     }
 }

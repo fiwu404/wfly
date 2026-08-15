@@ -1,4 +1,5 @@
 using System.ComponentModel;
+using System.Diagnostics;
 using System.Text;
 using System.Text.Json;
 using WFly.Models;
@@ -35,6 +36,7 @@ internal sealed partial class DashboardForm : Form
     private readonly SiteLatencyTestService _siteLatencyTestService;
     private readonly ClashApiClient _clashApiClient;
     private readonly WindowsSystemProxyService _systemProxyService;
+    private readonly bool _resumeTunAfterElevation;
     private readonly NetworkTrafficSampler _networkTrafficSampler = new();
     // Keep this aligned with NetworkTrafficSampler's 250 ms minimum delta.
     // The busy guard in RefreshTrafficAsync prevents controller calls overlapping.
@@ -111,7 +113,8 @@ internal sealed partial class DashboardForm : Form
         NetworkDiagnosticsService networkDiagnosticsService,
         SiteLatencyTestService siteLatencyTestService,
         ClashApiClient clashApiClient,
-        WindowsSystemProxyService systemProxyService)
+        WindowsSystemProxyService systemProxyService,
+        bool resumeTunAfterElevation)
     {
         _paths = paths ?? throw new ArgumentNullException(nameof(paths));
         _installedCoreStore = installedCoreStore ?? throw new ArgumentNullException(nameof(installedCoreStore));
@@ -129,6 +132,7 @@ internal sealed partial class DashboardForm : Form
         _siteLatencyTestService = siteLatencyTestService ?? throw new ArgumentNullException(nameof(siteLatencyTestService));
         _clashApiClient = clashApiClient ?? throw new ArgumentNullException(nameof(clashApiClient));
         _systemProxyService = systemProxyService ?? throw new ArgumentNullException(nameof(systemProxyService));
+        _resumeTunAfterElevation = resumeTunAfterElevation;
 
         InitializeComponent();
         _processService.LogReceived += OnCoreLogReceived;
@@ -607,15 +611,20 @@ internal sealed partial class DashboardForm : Form
 
     private async Task LoadStateAsync()
     {
+        var resumeTun = false;
         _isLoading = true;
         try
         {
             _settings = await _settingsStore.LoadAsync();
             var settingsChanged = NormalizeNativeConfigSettings();
+            resumeTun = _resumeTunAfterElevation &&
+                        _settings.ProxyMode == ProxyMode.Tun &&
+                        SingBoxTunConfigBuilder.IsAdministrator();
             // A core is not persisted across GUI launches.  Keep the three
             // position control honest: without a running core the middle
-            // position is the only active-safe state.
-            if (!_processService.IsRunning && _settings.ProxyMode != ProxyMode.Off)
+            // position is the only active-safe state, except for the one
+            // trusted runas restart requested immediately after choosing TUN.
+            if (!_processService.IsRunning && _settings.ProxyMode != ProxyMode.Off && !resumeTun)
             {
                 _settings.ProxyMode = ProxyMode.Off;
                 settingsChanged = true;
@@ -660,6 +669,11 @@ internal sealed partial class DashboardForm : Form
         {
             _isLoading = false;
             RefreshVisiblePage();
+        }
+
+        if (resumeTun && !IsDisposed)
+        {
+            await ResumeTunAfterElevationAsync();
         }
     }
 
@@ -810,6 +824,42 @@ internal sealed partial class DashboardForm : Form
                 return;
             }
 
+            if (selectedMode == ProxyMode.Tun &&
+                string.Equals(selectedNode.CoreId, "sing-box", StringComparison.OrdinalIgnoreCase) &&
+                !SingBoxTunConfigBuilder.IsAdministrator())
+            {
+                if (_processService.IsRunning)
+                {
+                    var stopped = await StopRunningCoreAsync();
+                    if (!stopped || _processService.IsRunning || _settings.SystemProxyLease is not null)
+                    {
+                        throw new InvalidOperationException("无法完整停止当前内核或恢复系统代理，因此没有切换到 TUN 模式。");
+                    }
+                }
+                else
+                {
+                    await RestoreSystemProxyAsync();
+                }
+
+                _settings.ProxyMode = ProxyMode.Tun;
+                await _settingsStore.SaveAsync(_settings);
+
+                if (TryRestartElevatedForTun())
+                {
+                    PostLog("SYS", "正在请求管理员权限以启动 TUN 模式。");
+                    SetStatus("正在请求管理员权限；确认 UAC 后将自动启动 TUN。");
+                    _allowCloseAfterCleanup = true;
+                    BeginInvoke(new Action(Close));
+                    return;
+                }
+
+                _settings.ProxyMode = ProxyMode.Off;
+                await _settingsStore.SaveAsync(_settings);
+                _proxyModeSelector.Mode = ProxyMode.Off;
+                SetStatus("未获得管理员权限，TUN 未启动。");
+                return;
+            }
+
             _settings.ProxyMode = selectedMode;
             await _settingsStore.SaveAsync(_settings);
 
@@ -824,6 +874,21 @@ internal sealed partial class DashboardForm : Form
             else
             {
                 await RestoreSystemProxyAsync();
+            }
+
+            if (selectedMode == ProxyMode.Tun &&
+                !string.Equals(selectedNode.CoreId, "sing-box", StringComparison.OrdinalIgnoreCase))
+            {
+                _settings.ProxyMode = ProxyMode.Off;
+                await _settingsStore.SaveAsync(_settings);
+                _proxyModeSelector.Mode = ProxyMode.Off;
+                MessageBox.Show(
+                    this,
+                    "TUN 模式目前仅支持 sing-box 节点。请先切换到 sing-box 节点后再开启。",
+                    "WFly",
+                    MessageBoxButtons.OK,
+                    MessageBoxIcon.Information);
+                return;
             }
 
             await StartSelectedNodeAsync();
@@ -855,6 +920,84 @@ internal sealed partial class DashboardForm : Form
             _proxyModeTransitionBusy = false;
             RefreshHomePage();
         }
+    }
+
+    private bool TryRestartElevatedForTun()
+    {
+        try
+        {
+            using var elevatedProcess = Process.Start(new ProcessStartInfo
+            {
+                FileName = Application.ExecutablePath,
+                Arguments = "--resume-tun",
+                WorkingDirectory = AppContext.BaseDirectory,
+                UseShellExecute = true,
+                Verb = "runas",
+            });
+            return elevatedProcess is not null;
+        }
+        catch (Win32Exception exception) when (exception.NativeErrorCode == 1223)
+        {
+            PostLog("SYS", "用户取消了 TUN 模式所需的管理员授权。");
+            return false;
+        }
+        catch (Exception exception)
+        {
+            PostLog("SYS", $"无法请求 TUN 所需的管理员权限：{exception.GetType().Name}。");
+            return false;
+        }
+    }
+
+    private async Task ResumeTunAfterElevationAsync()
+    {
+        if (_settings.ProxyMode != ProxyMode.Tun || _processService.IsRunning)
+        {
+            return;
+        }
+
+        if (!SingBoxTunConfigBuilder.IsAdministrator())
+        {
+            _settings.ProxyMode = ProxyMode.Off;
+            await _settingsStore.SaveAsync(_settings);
+            if (_proxyModeSelector is not null)
+            {
+                _proxyModeSelector.Mode = ProxyMode.Off;
+            }
+            SetStatus("未获得管理员权限，TUN 未启动。");
+            return;
+        }
+
+        if (SelectedNode is not { IsEnabled: true })
+        {
+            _settings.ProxyMode = ProxyMode.Off;
+            await _settingsStore.SaveAsync(_settings);
+            if (_proxyModeSelector is not null)
+            {
+                _proxyModeSelector.Mode = ProxyMode.Off;
+            }
+            SetStatus("未找到已启用节点，TUN 未启动。");
+            return;
+        }
+
+        PostLog("SYS", "已获得管理员权限，正在自动启动 TUN 模式。");
+        SetStatus("正在启动 TUN 模式…");
+        await StartSelectedNodeAsync();
+        if (_processService.IsRunning)
+        {
+            PostLog("SYS", "TUN 模式已启动。");
+        }
+        else
+        {
+            _settings.ProxyMode = ProxyMode.Off;
+            await _settingsStore.SaveAsync(_settings);
+            if (_proxyModeSelector is not null)
+            {
+                _proxyModeSelector.Mode = ProxyMode.Off;
+            }
+            SetStatus("TUN 启动失败，代理已保持关闭。");
+        }
+
+        RefreshHomePage();
     }
 
     private async Task CheckEgressAsync()
