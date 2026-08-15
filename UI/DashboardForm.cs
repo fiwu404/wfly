@@ -349,7 +349,16 @@ internal sealed partial class DashboardForm : Form
         layout.RowStyles.Add(new RowStyle(SizeType.AutoSize));
 
         var overview = CreateGroup("节点信息");
-        var overviewLayout = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 2, RowCount = 4, Padding = new Padding(10) };
+        var overviewLayout = new TableLayoutPanel
+        {
+            Dock = DockStyle.Top,
+            AutoSize = true,
+            AutoSizeMode = AutoSizeMode.GrowAndShrink,
+            ColumnCount = 2,
+            RowCount = 4,
+            Padding = new Padding(10),
+            Margin = Padding.Empty,
+        };
         overviewLayout.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
         overviewLayout.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100F));
         _homeNodeLabel = AddValueRow(overviewLayout, "节点", 0);
@@ -360,7 +369,16 @@ internal sealed partial class DashboardForm : Form
         layout.Controls.Add(overview, 0, 0);
 
         var modeGroup = CreateGroup("代理模式");
-        var modeLayout = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 1, RowCount = 1, Padding = new Padding(10) };
+        var modeLayout = new TableLayoutPanel
+        {
+            Dock = DockStyle.Top,
+            AutoSize = true,
+            AutoSizeMode = AutoSizeMode.GrowAndShrink,
+            ColumnCount = 1,
+            RowCount = 1,
+            Padding = new Padding(10),
+            Margin = Padding.Empty,
+        };
         _proxyModeSelector = new ProxyModeSelector { Dock = DockStyle.Top, BackColor = UiPalette.Card, ForeColor = UiPalette.Ink };
         _proxyModeSelector.ModeChanged += async (_, _) => await HandleProxyModeChangedAsync();
         modeLayout.Controls.Add(_proxyModeSelector, 0, 0);
@@ -368,7 +386,16 @@ internal sealed partial class DashboardForm : Form
         layout.Controls.Add(modeGroup, 1, 0);
 
         var egress = CreateGroup("IP 出口检测与真实延迟");
-        var egressLayout = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 2, RowCount = 4, Padding = new Padding(10) };
+        var egressLayout = new TableLayoutPanel
+        {
+            Dock = DockStyle.Top,
+            AutoSize = true,
+            AutoSizeMode = AutoSizeMode.GrowAndShrink,
+            ColumnCount = 2,
+            RowCount = 4,
+            Padding = new Padding(10),
+            Margin = Padding.Empty,
+        };
         egressLayout.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
         egressLayout.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100F));
         _homeIpLabel = AddValueRow(egressLayout, "出口 IP", 0);
