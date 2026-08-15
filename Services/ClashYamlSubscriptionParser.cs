@@ -9,14 +9,18 @@ namespace WFly.Services;
 /// <summary>
 /// Reads the small, data-only subset of a Clash subscription that WFly can
 /// safely convert into an individual sing-box outbound. This is deliberately
-/// not a general YAML parser: tags, anchors, aliases, flow mappings and every
+/// not a general YAML parser: tags, anchors, aliases, flow sequences and every
 /// section other than the root <c>proxies</c> list are rejected or ignored.
+/// A single-line flow mapping is accepted only for a proxy item and only with
+/// the small, explicitly supported set of scalar fields and option mappings.
 /// </summary>
 internal static class ClashYamlSubscriptionParser
 {
     private const int MaximumNodes = 2_000;
     private const int MaximumNodeNameLength = 256;
     private const int MaximumScalarLength = 4_096;
+    private const int MaximumFlowMappingLength = 32_768;
+    private const int MaximumFlowProperties = 64;
 
     public static ClashYamlSubscriptionParseResult TryParse(string content)
     {
@@ -35,6 +39,8 @@ internal static class ClashYamlSubscriptionParser
         var itemIndent = -1;
         string? section = null;
         string? subSection = null;
+        var currentIsFlowStyle = false;
+        var discardingFlowStyleItem = false;
 
         void CompleteCurrent()
         {
@@ -67,6 +73,7 @@ internal static class ClashYamlSubscriptionParser
                 current = null;
                 section = null;
                 subSection = null;
+                currentIsFlowStyle = false;
             }
         }
 
@@ -95,19 +102,57 @@ internal static class ClashYamlSubscriptionParser
             if (payload.StartsWith("- ", StringComparison.Ordinal) && (itemIndent < 0 || indent == itemIndent))
             {
                 CompleteCurrent();
+                discardingFlowStyleItem = false;
                 if (nodes.Count + skippedCount >= MaximumNodes)
                 {
                     throw new InvalidDataException($"Clash YAML 中的代理条目超过 {MaximumNodes} 个限制。");
                 }
 
                 itemIndent = indent;
+                var item = payload[2..].Trim();
+                if (item.StartsWith('{'))
+                {
+                    currentIsFlowStyle = true;
+                    try
+                    {
+                        current = ParseFlowStyleProxyItem(StripInlineComment(item).Trim());
+                    }
+                    catch (InvalidDataException)
+                    {
+                        // A rejected flow-style item is skipped as one node.
+                        // Keep consuming its indented continuation, if any,
+                        // rather than allowing it to affect the next item.
+                        current = null;
+                        discardingFlowStyleItem = true;
+                        skippedCount++;
+                    }
+
+                    continue;
+                }
+
+                currentIsFlowStyle = false;
                 current = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
-                if (!TryReadKeyValue(payload[2..], out var key, out var value) || value is null)
+                if (!TryReadKeyValue(item, out var key, out var value) || value is null)
                 {
                     throw new InvalidDataException("Clash YAML 的代理条目必须是普通键值映射。");
                 }
 
                 current[key] = value;
+                continue;
+            }
+
+            if (currentIsFlowStyle || discardingFlowStyleItem)
+            {
+                // Flow-style proxy items must be complete on the same line.
+                // Treat an indented continuation as an invalid individual item
+                // and skip it safely until the next list entry.
+                if (current is not null)
+                {
+                    current = null;
+                    skippedCount++;
+                }
+
+                discardingFlowStyleItem = true;
                 continue;
             }
 
@@ -167,13 +212,30 @@ internal static class ClashYamlSubscriptionParser
                 continue;
             }
 
-            if (TryReadKeyValue(line, out var key, out _) && string.Equals(key, "proxies", StringComparison.OrdinalIgnoreCase))
+            // Only inspect the root key name while searching. Other root
+            // settings (for example `http: { ... }`) are outside the import
+            // scope and must not be parsed or allowed to reject the
+            // subscription before we reach the `proxies` section.
+            if (TryReadRootKey(line, out var key) && string.Equals(key, "proxies", StringComparison.OrdinalIgnoreCase))
             {
                 return index;
             }
         }
 
         return -1;
+    }
+
+    private static bool TryReadRootKey(string source, out string key)
+    {
+        key = string.Empty;
+        var colonIndex = source.IndexOf(':');
+        if (colonIndex <= 0)
+        {
+            return false;
+        }
+
+        key = source[..colonIndex].Trim();
+        return IsSafeKey(key);
     }
 
     private static bool TryReadKeyValue(string source, out string key, out string? value)
@@ -200,6 +262,254 @@ internal static class ClashYamlSubscriptionParser
 
         value = ReadScalar(rawValue);
         return true;
+    }
+
+    private static Dictionary<string, string> ParseFlowStyleProxyItem(string source)
+    {
+        if (source.Length is 0 or > MaximumFlowMappingLength)
+        {
+            throw new InvalidDataException("Clash YAML flow-style proxy item is invalid.");
+        }
+
+        var position = 0;
+        var values = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        ReadFlowStyleMapping(source, ref position, values, null);
+        SkipFlowWhitespace(source, ref position);
+        if (position != source.Length)
+        {
+            throw new InvalidDataException("Clash YAML flow-style proxy item must end on the same line.");
+        }
+
+        return values;
+    }
+
+    private static void ReadFlowStyleMapping(
+        string source,
+        ref int position,
+        Dictionary<string, string> values,
+        string? parentKey)
+    {
+        if (position >= source.Length || source[position] != '{')
+        {
+            throw new InvalidDataException("Clash YAML flow mapping is invalid.");
+        }
+
+        position++;
+        var pairCount = 0;
+        var seenKeys = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        while (true)
+        {
+            SkipFlowWhitespace(source, ref position);
+            if (position >= source.Length)
+            {
+                throw new InvalidDataException("Clash YAML flow mapping is incomplete.");
+            }
+
+            if (source[position] == '}')
+            {
+                position++;
+                return;
+            }
+
+            if (++pairCount > MaximumFlowProperties)
+            {
+                throw new InvalidDataException("Clash YAML flow mapping has too many properties.");
+            }
+
+            var key = ReadFlowStyleKey(source, ref position);
+            if (!seenKeys.Add(key))
+            {
+                throw new InvalidDataException("Clash YAML flow mapping contains duplicate properties.");
+            }
+
+            SkipFlowWhitespace(source, ref position);
+            if (position >= source.Length || source[position] != ':')
+            {
+                throw new InvalidDataException("Clash YAML flow mapping is invalid.");
+            }
+
+            position++;
+            SkipFlowWhitespace(source, ref position);
+            if (position >= source.Length)
+            {
+                throw new InvalidDataException("Clash YAML flow mapping is incomplete.");
+            }
+
+            if (source[position] == '{')
+            {
+                if (parentKey is not null || !string.Equals(key, "reality-opts", StringComparison.OrdinalIgnoreCase))
+                {
+                    // Only the one-level Reality options mapping is supported.
+                    // Nested maps are intentionally not parsed as general YAML.
+                    throw new InvalidDataException("Clash YAML contains an unsupported nested flow mapping.");
+                }
+
+                ReadFlowStyleMapping(source, ref position, values, key);
+            }
+            else
+            {
+                var value = ReadFlowStyleScalar(source, ref position);
+                StoreFlowStyleValue(values, parentKey, key, value);
+            }
+
+            SkipFlowWhitespace(source, ref position);
+            if (position >= source.Length)
+            {
+                throw new InvalidDataException("Clash YAML flow mapping is incomplete.");
+            }
+
+            if (source[position] == '}')
+            {
+                position++;
+                return;
+            }
+
+            if (source[position] != ',')
+            {
+                throw new InvalidDataException("Clash YAML flow mapping is invalid.");
+            }
+
+            position++;
+        }
+    }
+
+    private static string ReadFlowStyleKey(string source, ref int position)
+    {
+        var start = position;
+        while (position < source.Length &&
+               (char.IsAsciiLetterOrDigit(source[position]) || source[position] is '-' or '_'))
+        {
+            position++;
+        }
+
+        var key = source[start..position];
+        if (!IsSafeKey(key))
+        {
+            throw new InvalidDataException("Clash YAML flow mapping contains an invalid key.");
+        }
+
+        return key;
+    }
+
+    private static string ReadFlowStyleScalar(string source, ref int position)
+    {
+        if (source[position] is '[' or ']')
+        {
+            throw new InvalidDataException("Clash YAML flow sequences are not supported.");
+        }
+
+        var start = position;
+        if (source[position] == '"')
+        {
+            position++;
+            var escaped = false;
+            while (position < source.Length)
+            {
+                var character = source[position++];
+                if (character == '"' && !escaped)
+                {
+                    return ReadScalar(source[start..position]);
+                }
+
+                escaped = character == '\\' && !escaped;
+                if (character != '\\')
+                {
+                    escaped = false;
+                }
+            }
+
+            throw new InvalidDataException("Clash YAML flow string is incomplete.");
+        }
+
+        if (source[position] == '\'')
+        {
+            position++;
+            while (position < source.Length)
+            {
+                if (source[position] != '\'')
+                {
+                    position++;
+                    continue;
+                }
+
+                if (position + 1 < source.Length && source[position + 1] == '\'')
+                {
+                    position += 2;
+                    continue;
+                }
+
+                position++;
+                return ReadScalar(source[start..position]);
+            }
+
+            throw new InvalidDataException("Clash YAML flow string is incomplete.");
+        }
+
+        while (position < source.Length && source[position] is not ',' and not '}')
+        {
+            if (source[position] is '[' or ']' or '{')
+            {
+                throw new InvalidDataException("Clash YAML contains an unsupported flow construct.");
+            }
+
+            position++;
+        }
+
+        var rawValue = source[start..position].Trim();
+        if (rawValue.Length == 0)
+        {
+            throw new InvalidDataException("Clash YAML flow scalar is empty.");
+        }
+
+        return ReadScalar(rawValue);
+    }
+
+    private static void StoreFlowStyleValue(
+        Dictionary<string, string> values,
+        string? parentKey,
+        string key,
+        string value)
+    {
+        if (parentKey is null)
+        {
+            if (IsSupportedFlowScalarKey(key))
+            {
+                values[key] = value;
+            }
+
+            // Unknown scalar fields are deliberately ignored. They are never
+            // interpreted or emitted into the sing-box outbound.
+            return;
+        }
+
+        if (string.Equals(parentKey, "reality-opts", StringComparison.OrdinalIgnoreCase) &&
+            (string.Equals(key, "public-key", StringComparison.OrdinalIgnoreCase) ||
+             string.Equals(key, "short-id", StringComparison.OrdinalIgnoreCase)))
+        {
+            values[$"reality-opts.{key}"] = value;
+        }
+    }
+
+    private static bool IsSupportedFlowScalarKey(string key) =>
+        string.Equals(key, "name", StringComparison.OrdinalIgnoreCase) ||
+        string.Equals(key, "type", StringComparison.OrdinalIgnoreCase) ||
+        string.Equals(key, "server", StringComparison.OrdinalIgnoreCase) ||
+        string.Equals(key, "port", StringComparison.OrdinalIgnoreCase) ||
+        string.Equals(key, "uuid", StringComparison.OrdinalIgnoreCase) ||
+        string.Equals(key, "flow", StringComparison.OrdinalIgnoreCase) ||
+        string.Equals(key, "tls", StringComparison.OrdinalIgnoreCase) ||
+        string.Equals(key, "servername", StringComparison.OrdinalIgnoreCase) ||
+        string.Equals(key, "sni", StringComparison.OrdinalIgnoreCase) ||
+        string.Equals(key, "skip-cert-verify", StringComparison.OrdinalIgnoreCase) ||
+        string.Equals(key, "client-fingerprint", StringComparison.OrdinalIgnoreCase) ||
+        string.Equals(key, "network", StringComparison.OrdinalIgnoreCase);
+
+    private static void SkipFlowWhitespace(string source, ref int position)
+    {
+        while (position < source.Length && char.IsWhiteSpace(source[position]))
+        {
+            position++;
+        }
     }
 
     private static string ReadScalar(string rawValue)
