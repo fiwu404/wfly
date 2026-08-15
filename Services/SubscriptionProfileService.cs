@@ -167,6 +167,39 @@ internal sealed class SubscriptionProfileService
             throw new InvalidDataException("无法下载订阅内容。");
         }
 
+        var sourceHost = string.IsNullOrWhiteSpace(downloaded.finalUri.IdnHost)
+            ? downloaded.finalUri.Host
+            : downloaded.finalUri.IdnHost;
+
+        var clashSubscription = ClashYamlSubscriptionParser.TryParse(downloaded.content);
+        if (!clashSubscription.IsDetected && TryDecodeBase64Text(downloaded.content.Trim(), out var decodedContent))
+        {
+            clashSubscription = ClashYamlSubscriptionParser.TryParse(decodedContent);
+        }
+
+        if (clashSubscription.IsDetected)
+        {
+            if (clashSubscription.Nodes.Count == 0)
+            {
+                throw new InvalidDataException("Clash YAML 订阅中没有可导入的 VLESS 节点。");
+            }
+
+            var clashNodes = clashSubscription.Nodes
+                .Select((node, index) =>
+                {
+                    var tag = $"node-{index + 1:D4}";
+                    node.Outbound["tag"] = tag;
+                    return new ParsedNode(
+                        node.Outbound,
+                        tag,
+                        node.Protocol,
+                        node.Name,
+                        node.Identity);
+                })
+                .ToArray();
+            return new ParsedSubscription(clashNodes, clashSubscription.SkippedCount, sourceHost);
+        }
+
         var links = ExtractLinks(downloaded.content);
         var nodes = new List<ParsedNode>();
         var skippedCount = 0;
@@ -205,9 +238,6 @@ internal sealed class SubscriptionProfileService
             throw new InvalidDataException("订阅中没有可导入的 SS、VMess、VLESS 或 Trojan 节点。");
         }
 
-        var sourceHost = string.IsNullOrWhiteSpace(downloaded.finalUri.IdnHost)
-            ? downloaded.finalUri.Host
-            : downloaded.finalUri.IdnHost;
         return new ParsedSubscription(nodes, skippedCount, sourceHost);
     }
 

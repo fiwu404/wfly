@@ -101,7 +101,7 @@ internal sealed partial class DashboardForm
                     GetCoreDisplay(group.CoreId),
                     group.UpdateIntervalHours is { } hours ? $"每 {hours} 小时" : "不更新",
                     group.LastUpdatedAt is { } updatedAt ? updatedAt.LocalDateTime.ToString("yyyy-MM-dd HH:mm") : "从未",
-                    string.IsNullOrWhiteSpace(group.LastUpdateError) ? "正常" : "上次失败");
+                    string.IsNullOrWhiteSpace(group.LastUpdateError) ? "正常" : "更新失败（查看日志）");
                 _groupGrid.Rows[rowIndex].Tag = group.Id;
                 if (string.Equals(group.Id, _settings.SelectedNodeGroupId, StringComparison.Ordinal))
                 {
@@ -235,7 +235,10 @@ internal sealed partial class DashboardForm
             return;
         }
 
-        await RunOperationAsync("正在更新订阅…", cancellationToken => RefreshGroupSubscriptionAsync(group, cancellationToken));
+        await RunOperationAsync(
+            "正在更新订阅…",
+            cancellationToken => RefreshGroupSubscriptionAsync(group, cancellationToken),
+            showErrorDialog: false);
     }
 
     private async Task RefreshGroupSubscriptionAsync(NodeGroup group, CancellationToken cancellationToken)

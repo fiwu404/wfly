@@ -1448,7 +1448,10 @@ internal sealed partial class DashboardForm : Form
         }
     }
 
-    private async Task<bool> RunOperationAsync(string status, Func<CancellationToken, Task> operation)
+    private async Task<bool> RunOperationAsync(
+        string status,
+        Func<CancellationToken, Task> operation,
+        bool showErrorDialog = true)
     {
         if (_operationBusy)
         {
@@ -1475,7 +1478,20 @@ internal sealed partial class DashboardForm : Form
         }
         catch (Exception exception)
         {
-            ShowError(status, exception);
+            if (showErrorDialog)
+            {
+                ShowError(status, exception);
+            }
+            else
+            {
+                // Subscription refresh errors are already persisted against the
+                // node group. Keep the page usable and route the safe error
+                // summary to the status bar and in-memory log instead of
+                // blocking the whole window with a modal dialog.
+                var summary = $"{status.TrimEnd('…')}失败：{exception.Message}";
+                PostLog("SUB", summary);
+                SetStatus($"{summary}。详情见节点组状态或日志。");
+            }
             return false;
         }
         finally

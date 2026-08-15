@@ -1,8 +1,8 @@
 # WFly
 
-Windows x64 轻量代理桌面客户端，当前版本：`v0.0.7`。
+Windows x64 轻量代理桌面客户端，当前版本：`v0.0.8`。
 
-WFly 以节点组为中心管理订阅和手动节点，提供 sing-box、Xray-core 与 Mihomo 的官方内核下载/更新，并把全部运行数据放在项目同级的 `data/` 目录。
+WFly 以节点组为中心管理订阅和手动节点，提供 sing-box、Xray-core 与 Mihomo 的官方内核下载/更新，并把全部运行数据放在项目同级的 `data/` 目录。订阅支持常规 Base64/逐行链接，以及受限转换的 Clash/Mihomo YAML `proxies` 中 VLESS 节点。
 
 ## 功能
 
