@@ -507,15 +507,16 @@ internal sealed partial class DashboardForm : Form
         content.Controls.Add(CreatePageHeader("设置"), 0, 0);
 
         var general = CreateGroup("本地运行设置");
-        general.Dock = DockStyle.Fill;
+        general.Dock = DockStyle.Top;
         var generalLayout = new TableLayoutPanel
         {
-            Dock = DockStyle.Fill,
+            Dock = DockStyle.Top,
             AutoSize = true,
             AutoSizeMode = AutoSizeMode.GrowAndShrink,
             ColumnCount = 2,
             RowCount = 5,
             Padding = new Padding(4),
+            Margin = Padding.Empty,
         };
         generalLayout.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
         generalLayout.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100F));
@@ -567,18 +568,19 @@ internal sealed partial class DashboardForm : Form
         content.Controls.Add(general, 0, 1);
 
         var cores = CreateGroup("内核下载与更新");
-        cores.Dock = DockStyle.Fill;
+        cores.Dock = DockStyle.Top;
         var coreLayout = new TableLayoutPanel
         {
-            Dock = DockStyle.Fill,
+            Dock = DockStyle.Top,
             AutoSize = true,
             AutoSizeMode = AutoSizeMode.GrowAndShrink,
             ColumnCount = 1,
             RowCount = 3,
             Padding = new Padding(4),
+            Margin = Padding.Empty,
         };
         coreLayout.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100F));
-        coreLayout.RowStyles.Add(new RowStyle(SizeType.AutoSize));
+        coreLayout.RowStyles.Add(new RowStyle(SizeType.Absolute, 32F));
         coreLayout.RowStyles.Add(new RowStyle(SizeType.Absolute, 210F));
         coreLayout.RowStyles.Add(new RowStyle(SizeType.AutoSize));
         _installedCoreLabel = new Label { AutoSize = true, ForeColor = UiPalette.MutedInk, Text = "正在读取已安装内核…", Margin = new Padding(0, 0, 0, 8) };
