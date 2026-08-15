@@ -1,0 +1,47 @@
+# Build output
+**/[Bb]in/
+**/[Oo]bj/
+
+# Local .NET CLI and NuGet caches used by this workspace
+/.dotnet-cli/
+/.nuget/
+
+# Visual Studio, Rider, VS Code and user-specific files
+/.vs/
+/.idea/
+.vscode/
+*.suo
+*.user
+*.userosscache
+*.sln.docstates
+*.rsuser
+*.pidb
+*.svclog
+
+# Test, coverage and diagnostic output
+TestResults/
+**/TestResults/
+coverage/
+*.coverage
+*.coveragexml
+*.trx
+*.log
+
+# Package and publish artifacts
+*.nupkg
+*.snupkg
+artifacts/
+
+# Local configuration and credentials
+.env
+.env.*
+*.local.json
+appsettings.Development.json
+*.pfx
+*.p12
+*.pem
+*.key
+
+# Windows Explorer metadata
+[Dd]esktop.ini
+Thumbs.db
