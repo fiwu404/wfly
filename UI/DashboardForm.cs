@@ -94,8 +94,6 @@ internal sealed partial class DashboardForm : Form
     private DataGridView? _coreGrid;
     private NumericUpDown? _mixedPortInput;
     private TextBox? _tunNameInput;
-    private TextBox? _nativeConfigPathTextBox;
-    private Label? _installedCoreLabel;
 
     public DashboardForm(
         AppPaths paths,
@@ -168,7 +166,7 @@ internal sealed partial class DashboardForm : Form
         BackColor = UiPalette.Canvas;
         HandleCreated += (_, _) => WindowBackdrop.Apply(this);
 
-        // The navigation stays on the right, separated by one drawn line.
+        // The navigation stays on the left, separated by one drawn line.
         // SplitContainer keeps the divider draggable so users can choose the
         // content/navigation ratio that works for their screen.
         var root = new SplitContainer
@@ -198,18 +196,19 @@ internal sealed partial class DashboardForm : Form
             // Initialise after Dock has given SplitContainer a real width;
             // setting panel minimums or SplitterDistance on its default
             // design-time width would throw before the form can be shown.
-            root.Panel1MinSize = contentMinimum;
-            root.Panel2MinSize = navigationMinimum;
-            var maximum = root.ClientSize.Width - navigationMinimum - root.SplitterWidth;
-            root.SplitterDistance = Math.Clamp(root.ClientSize.Width - 188, contentMinimum, maximum);
+            root.Panel1MinSize = navigationMinimum;
+            root.Panel2MinSize = contentMinimum;
+            var maximum = root.ClientSize.Width - contentMinimum - root.SplitterWidth;
+            root.SplitterDistance = Math.Clamp(188, navigationMinimum, maximum);
             splitInitialized = true;
         };
         root.Panel1.BackColor = UiPalette.Canvas;
         root.Panel2.BackColor = UiPalette.Canvas;
-        root.Panel2.Paint += (_, args) =>
+        root.Panel1.Paint += (_, args) =>
         {
             using var divider = new Pen(UiPalette.CardBorder);
-            args.Graphics.DrawLine(divider, 0, 0, 0, root.Panel2.ClientSize.Height);
+            var x = Math.Max(0, root.Panel1.ClientSize.Width - 1);
+            args.Graphics.DrawLine(divider, x, 0, x, root.Panel1.ClientSize.Height);
         };
 
         var main = new TableLayoutPanel
@@ -234,11 +233,6 @@ internal sealed partial class DashboardForm : Form
             Dock = DockStyle.Fill,
             BackColor = Color.Transparent,
             Padding = new Padding(16, 26, 16, 18),
-        };
-        navigation.Paint += (_, args) =>
-        {
-            using var divider = new Pen(UiPalette.CardBorder);
-            args.Graphics.DrawLine(divider, 0, 0, 0, navigation.ClientSize.Height);
         };
         var navigationLayout = new TableLayoutPanel
         {
@@ -287,8 +281,8 @@ internal sealed partial class DashboardForm : Form
         navigationLayout.RowStyles.Add(new RowStyle(SizeType.Percent, 100F));
         navigation.Controls.Add(navigationLayout);
 
-        root.Panel1.Controls.Add(main);
-        root.Panel2.Controls.Add(navigation);
+        root.Panel1.Controls.Add(navigation);
+        root.Panel2.Controls.Add(main);
         Controls.Add(root);
         ShowPage("首页");
     }
@@ -514,13 +508,13 @@ internal sealed partial class DashboardForm : Form
             AutoSize = true,
             AutoSizeMode = AutoSizeMode.GrowAndShrink,
             ColumnCount = 2,
-            RowCount = 5,
+            RowCount = 4,
             Padding = new Padding(4),
             Margin = Padding.Empty,
         };
         generalLayout.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
         generalLayout.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100F));
-        for (var row = 0; row < 5; row++)
+        for (var row = 0; row < 4; row++)
         {
             generalLayout.RowStyles.Add(new RowStyle(SizeType.AutoSize));
         }
@@ -535,13 +529,6 @@ internal sealed partial class DashboardForm : Form
             ValueMember = nameof(CoreDefinition.Id),
             DataSource = CoreRegistry.All.ToArray(),
         };
-        _settingsCoreSelector.SelectedIndexChanged += (_, _) =>
-        {
-            if (!_isLoading)
-            {
-                RefreshNativeConfigPathDisplay();
-            }
-        };
         generalLayout.Controls.Add(_settingsCoreSelector, 1, 0);
         generalLayout.Controls.Add(CreateSettingsLabel("本地混合端口"), 0, 1);
         _mixedPortInput = new NumericUpDown { Minimum = 1, Maximum = 65535, Width = 160, Anchor = AnchorStyles.Left };
@@ -549,21 +536,11 @@ internal sealed partial class DashboardForm : Form
         generalLayout.Controls.Add(CreateSettingsLabel("TUN 接口名"), 0, 2);
         _tunNameInput = new TextBox { Dock = DockStyle.Fill, MinimumSize = new Size(260, 30) };
         generalLayout.Controls.Add(_tunNameInput, 1, 2);
-        generalLayout.Controls.Add(CreateSettingsLabel("原生配置文件"), 0, 3);
-        var nativeConfigPanel = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 2, RowCount = 1, Margin = Padding.Empty };
-        nativeConfigPanel.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100F));
-        nativeConfigPanel.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
-        _nativeConfigPathTextBox = new TextBox { Dock = DockStyle.Fill, ReadOnly = true, MinimumSize = new Size(260, 30), PlaceholderText = "用于 Mihomo / Xray-core 的已导入本地配置" };
-        var importNativeConfig = CreateSecondaryButton("导入…");
-        importNativeConfig.Click += async (_, _) => await ImportNativeConfigAsync();
-        nativeConfigPanel.Controls.Add(_nativeConfigPathTextBox, 0, 0);
-        nativeConfigPanel.Controls.Add(importNativeConfig, 1, 0);
-        generalLayout.Controls.Add(nativeConfigPanel, 1, 3);
         var saveSettings = CreatePrimaryButton("保存设置");
         saveSettings.Anchor = AnchorStyles.Left;
         saveSettings.Margin = new Padding(0, 10, 0, 0);
         saveSettings.Click += async (_, _) => await SaveGeneralSettingsAsync();
-        generalLayout.Controls.Add(saveSettings, 1, 4);
+        generalLayout.Controls.Add(saveSettings, 1, 3);
         general.Controls.Add(generalLayout);
         content.Controls.Add(general, 0, 1);
 
@@ -575,27 +552,24 @@ internal sealed partial class DashboardForm : Form
             AutoSize = true,
             AutoSizeMode = AutoSizeMode.GrowAndShrink,
             ColumnCount = 1,
-            RowCount = 3,
+            RowCount = 2,
             Padding = new Padding(4),
             Margin = Padding.Empty,
         };
         coreLayout.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100F));
-        coreLayout.RowStyles.Add(new RowStyle(SizeType.Absolute, 32F));
         coreLayout.RowStyles.Add(new RowStyle(SizeType.Absolute, 210F));
         coreLayout.RowStyles.Add(new RowStyle(SizeType.AutoSize));
-        _installedCoreLabel = new Label { AutoSize = true, ForeColor = UiPalette.MutedInk, Text = "正在读取已安装内核…", Margin = new Padding(0, 0, 0, 8) };
-        coreLayout.Controls.Add(_installedCoreLabel, 0, 0);
         _coreGrid = CreateGrid();
         _coreGrid.Dock = DockStyle.Fill;
         _coreGrid.Columns.Add("Name", "内核");
         _coreGrid.Columns.Add("Id", "标识");
         _coreGrid.Columns.Add("Installed", "已安装版本");
-        coreLayout.Controls.Add(_coreGrid, 0, 1);
+        coreLayout.Controls.Add(_coreGrid, 0, 0);
         var downloadCore = CreatePrimaryButton("检查并下载选中内核");
         downloadCore.Anchor = AnchorStyles.Left;
         downloadCore.Margin = new Padding(0, 10, 0, 0);
         downloadCore.Click += async (_, _) => await DownloadSelectedCoreAsync();
-        coreLayout.Controls.Add(downloadCore, 0, 2);
+        coreLayout.Controls.Add(downloadCore, 0, 1);
         cores.Controls.Add(coreLayout);
         content.Controls.Add(cores, 0, 2);
 
@@ -1061,7 +1035,6 @@ internal sealed partial class DashboardForm : Form
             _settingsCoreSelector.SelectedItem = definition;
             _mixedPortInput!.Value = Math.Clamp(_settings.MixedProxyPort, (int)_mixedPortInput.Minimum, (int)_mixedPortInput.Maximum);
             _tunNameInput!.Text = _settings.TunInterfaceName;
-            _nativeConfigPathTextBox!.Text = GetNativeConfigPath(definition.Id) ?? string.Empty;
             var installed = await _installedCoreStore.GetAllAsync();
             _coreGrid.Rows.Clear();
             foreach (var core in CoreRegistry.All)
@@ -1073,7 +1046,6 @@ internal sealed partial class DashboardForm : Form
                 _coreGrid.Rows.Add(core.DisplayName, core.Id, latest?.Version ?? "未安装");
             }
 
-            _installedCoreLabel!.Text = $"默认内核：{definition.DisplayName}。下载目录：{_paths.CoresDirectory}";
         }
         catch (Exception exception)
         {
@@ -1173,11 +1145,6 @@ internal sealed partial class DashboardForm : Form
 
             SetNativeConfigPath(targetDefinition.Id, targetPath);
             await _settingsStore.SaveAsync(_settings, cancellationToken);
-            if (_nativeConfigPathTextBox is not null)
-            {
-                _nativeConfigPathTextBox.Text = targetPath;
-            }
-
             PostLog("CFG", "已将原生配置导入 data/profiles。 ");
         });
     }
@@ -1395,17 +1362,6 @@ internal sealed partial class DashboardForm : Form
         }
 
         return true;
-    }
-
-    private void RefreshNativeConfigPathDisplay()
-    {
-        if (_nativeConfigPathTextBox is null)
-        {
-            return;
-        }
-
-        var definition = _settingsCoreSelector?.SelectedItem as CoreDefinition;
-        _nativeConfigPathTextBox.Text = definition is null ? string.Empty : GetNativeConfigPath(definition.Id) ?? string.Empty;
     }
 
     private static bool IsNativeConfigCore(string? coreId) =>
