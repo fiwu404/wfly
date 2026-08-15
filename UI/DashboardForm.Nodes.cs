@@ -1,4 +1,5 @@
 using WFly.Models;
+using WFly.UI.Controls;
 using WFly.UI.Dialogs;
 
 namespace WFly.UI;
@@ -8,16 +9,16 @@ internal sealed partial class DashboardForm
     private Control BuildNodeGroupsPage()
     {
         var root = CreateScrollablePage();
-        root.Controls.Add(CreatePageHeader("节点组", "节点组是节点的唯一父级。订阅链接留空时会创建一个空组；不会创建“全部”分类。"));
+        root.Controls.Add(CreatePageHeader("节点组"));
 
-        var actions = new FlowLayoutPanel { AutoSize = true, Margin = new Padding(0, 0, 0, 10) };
+        var actions = new FlowLayoutPanel { AutoSize = true, Margin = new Padding(0, 0, 0, 10), BackColor = UiPalette.Canvas };
         var add = CreatePrimaryButton("新建节点组");
         add.Click += async (_, _) => await AddOrEditNodeGroupAsync(null);
-        var edit = new Button { Text = "编辑", AutoSize = true };
+        var edit = CreateSecondaryButton("编辑");
         edit.Click += async (_, _) => await AddOrEditNodeGroupAsync(GetSelectedGroupFromGrid());
-        var update = new Button { Text = "立即更新订阅", AutoSize = true };
+        var update = CreateSecondaryButton("立即更新订阅");
         update.Click += async (_, _) => await RefreshSelectedGroupSubscriptionAsync();
-        var delete = new Button { Text = "删除节点组", AutoSize = true };
+        var delete = CreateSecondaryButton("删除节点组");
         delete.Click += async (_, _) => await DeleteSelectedNodeGroupAsync();
         actions.Controls.Add(add);
         actions.Controls.Add(edit);
@@ -41,23 +42,23 @@ internal sealed partial class DashboardForm
     private Control BuildNodesPage()
     {
         var root = CreateScrollablePage();
-        root.Controls.Add(CreatePageHeader("节点", "请先选择或创建节点组。节点只能归属于一个已创建的节点组，不提供“全部”分类。"));
+        root.Controls.Add(CreatePageHeader("节点"));
 
-        var groupPanel = new FlowLayoutPanel { AutoSize = true, Margin = new Padding(0, 0, 0, 10) };
+        var groupPanel = new FlowLayoutPanel { AutoSize = true, Margin = new Padding(0, 0, 0, 10), BackColor = UiPalette.Canvas };
         groupPanel.Controls.Add(new Label { Text = "节点组", AutoSize = true, Padding = new Padding(0, 7, 8, 0) });
         _nodeGroupSelector = new ComboBox { DropDownStyle = ComboBoxStyle.DropDownList, Width = 260 };
         _nodeGroupSelector.SelectedIndexChanged += async (_, _) => await SelectGroupFromNodeSelectorAsync();
         groupPanel.Controls.Add(_nodeGroupSelector);
         root.Controls.Add(groupPanel);
 
-        var actions = new FlowLayoutPanel { AutoSize = true, Margin = new Padding(0, 0, 0, 10) };
+        var actions = new FlowLayoutPanel { AutoSize = true, Margin = new Padding(0, 0, 0, 10), BackColor = UiPalette.Canvas };
         var add = CreatePrimaryButton("添加节点");
         add.Click += async (_, _) => await AddOrEditNodeAsync(null);
-        var edit = new Button { Text = "编辑节点", AutoSize = true };
+        var edit = CreateSecondaryButton("编辑节点");
         edit.Click += async (_, _) => await AddOrEditNodeAsync(GetSelectedNodeFromGrid());
-        var toggle = new Button { Text = "启用/停用", AutoSize = true };
+        var toggle = CreateSecondaryButton("启用/停用");
         toggle.Click += async (_, _) => await ToggleSelectedNodeAsync();
-        var delete = new Button { Text = "删除节点", AutoSize = true };
+        var delete = CreateSecondaryButton("删除节点");
         delete.Click += async (_, _) => await DeleteSelectedNodeAsync();
         actions.Controls.Add(add);
         actions.Controls.Add(edit);

@@ -15,7 +15,9 @@ internal sealed record TrafficChartSample(
 /// </summary>
 internal sealed class TrafficChartControl : Control
 {
-    private const int MaximumSamples = 120;
+    // 250 ms refreshes retain the same roughly two-minute context that the
+    // former one-second sampling window showed.
+    private const int MaximumSamples = 480;
     private readonly List<TrafficChartSample> _samples = [];
     private readonly ToolTip _toolTip = new();
     private int _hoveredSample = -1;
@@ -29,7 +31,7 @@ internal sealed class TrafficChartControl : Control
             ControlStyles.UserPaint,
             true);
         BackColor = Color.White;
-        MinimumSize = new Size(320, 190);
+        MinimumSize = new Size(280, 190);
     }
 
     [Browsable(false)]
@@ -71,7 +73,7 @@ internal sealed class TrafficChartControl : Control
         graphics.SmoothingMode = SmoothingMode.AntiAlias;
         graphics.Clear(BackColor);
 
-        var bounds = new Rectangle(44, 18, Math.Max(1, Width - 62), Math.Max(1, Height - 54));
+        var bounds = GetPlotBounds();
         DrawGrid(graphics, bounds);
         if (_samples.Count == 0)
         {
@@ -119,7 +121,7 @@ internal sealed class TrafficChartControl : Control
             return;
         }
 
-        var bounds = new Rectangle(44, 18, Math.Max(1, Width - 62), Math.Max(1, Height - 54));
+        var bounds = GetPlotBounds();
         var relative = Math.Clamp(e.X - bounds.Left, 0, bounds.Width);
         var index = _samples.Count == 1
             ? 0
@@ -213,7 +215,16 @@ internal sealed class TrafficChartControl : Control
 
     private void DrawLegend(Graphics graphics, int y)
     {
-        var legend = new[]
+        var compact = Width < 480;
+        var legend = compact
+            ? new[]
+            {
+                ("代理↑", Color.FromArgb(238, 105, 89)),
+                ("代理↓", Color.FromArgb(54, 127, 245)),
+                ("直连↑", Color.FromArgb(151, 103, 219)),
+                ("直连↓", Color.FromArgb(31, 160, 111)),
+            }
+            : new[]
         {
             ("代理上传", Color.FromArgb(238, 105, 89)),
             ("代理下载", Color.FromArgb(54, 127, 245)),
@@ -223,11 +234,31 @@ internal sealed class TrafficChartControl : Control
         var x = 44;
         foreach (var (text, color) in legend)
         {
+            var itemWidth = TextRenderer.MeasureText(text, Font).Width + 34;
+            if (x + itemWidth > Width - 8 && x > 44)
+            {
+                x = 44;
+                y += Font.Height + 4;
+            }
+
             using var brush = new SolidBrush(color);
             graphics.FillRectangle(brush, x, y + 3, 9, 9);
             TextRenderer.DrawText(graphics, text, Font, new Point(x + 14, y), ForeColor, TextFormatFlags.NoPadding);
-            x += TextRenderer.MeasureText(text, Font).Width + 34;
+            x += itemWidth;
         }
+    }
+
+    private Rectangle GetPlotBounds()
+    {
+        // The compact legend can wrap into two rows in a narrow, user-resized
+        // content area.  Reserve that space in both painting and hit testing.
+        var legendRows = Width < 480 ? 2 : 1;
+        var bottomSpace = legendRows * (Font.Height + 4) + 16;
+        return new Rectangle(
+            44,
+            18,
+            Math.Max(1, Width - 62),
+            Math.Max(1, Height - 18 - bottomSpace));
     }
 
     private static int GetX(Rectangle bounds, int index, int count) =>

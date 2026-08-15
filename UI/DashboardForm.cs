@@ -36,12 +36,13 @@ internal sealed partial class DashboardForm : Form
     private readonly ClashApiClient _clashApiClient;
     private readonly WindowsSystemProxyService _systemProxyService;
     private readonly NetworkTrafficSampler _networkTrafficSampler = new();
-    private readonly System.Windows.Forms.Timer _trafficTimer = new() { Interval = 1_000 };
+    // Keep this aligned with NetworkTrafficSampler's 250 ms minimum delta.
+    // The busy guard in RefreshTrafficAsync prevents controller calls overlapping.
+    private readonly System.Windows.Forms.Timer _trafficTimer = new() { Interval = 250 };
     private readonly System.Windows.Forms.Timer _subscriptionTimer = new() { Interval = 5 * 60 * 1_000 };
     private readonly Dictionary<string, Control> _pages = new(StringComparer.Ordinal);
     private readonly Dictionary<string, Button> _navigationButtons = new(StringComparer.Ordinal);
-    private readonly Panel _pageHost = new() { Dock = DockStyle.Fill, BackColor = Color.FromArgb(247, 249, 252) };
-    private readonly Label _pageTitleLabel = new();
+    private readonly Panel _pageHost = new() { Dock = DockStyle.Fill, BackColor = UiPalette.Canvas };
     private readonly Label _statusLabel = new();
 
     private AppSettings _settings = new();
@@ -55,6 +56,7 @@ internal sealed partial class DashboardForm : Form
     private bool _closeCleanupInProgress;
     private bool _allowCloseAfterCleanup;
     private bool _trafficTickBusy;
+    private bool _proxyModeTransitionBusy;
     private string? _runningCoreId;
     private int? _runningMixedProxyPort;
     private long _previousProxyUploadTotal;
@@ -72,8 +74,6 @@ internal sealed partial class DashboardForm : Form
     private Label? _homeConnectionCountLabel;
     private ProxyModeSelector? _proxyModeSelector;
     private TrafficChartControl? _trafficChart;
-    private Button? _homeStartButton;
-    private Button? _homeStopButton;
 
     // 节点组 / 节点（由 partial 文件建立）
     private DataGridView? _groupGrid;
@@ -165,63 +165,96 @@ internal sealed partial class DashboardForm : Form
         ClientSize = new Size(1280, 820);
         AutoScaleMode = AutoScaleMode.Dpi;
         Font = new Font("Microsoft YaHei UI", 9F);
-        BackColor = Color.FromArgb(247, 249, 252);
+        BackColor = UiPalette.Canvas;
+        HandleCreated += (_, _) => WindowBackdrop.Apply(this);
 
-        var root = new TableLayoutPanel
+        // The navigation stays on the right, separated by one drawn line.
+        // SplitContainer keeps the divider draggable so users can choose the
+        // content/navigation ratio that works for their screen.
+        var root = new SplitContainer
         {
             Dock = DockStyle.Fill,
-            ColumnCount = 2,
-            RowCount = 1,
-            Margin = Padding.Empty,
-            Padding = Padding.Empty,
+            Orientation = Orientation.Vertical,
+            FixedPanel = FixedPanel.None,
+            IsSplitterFixed = false,
+            SplitterWidth = 4,
+            BackColor = UiPalette.Canvas,
         };
-        root.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100F));
-        root.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 156F));
-        root.RowStyles.Add(new RowStyle(SizeType.Percent, 100F));
+        var splitInitialized = false;
+        root.SizeChanged += (_, _) =>
+        {
+            if (splitInitialized)
+            {
+                return;
+            }
+
+            const int contentMinimum = 720;
+            const int navigationMinimum = 148;
+            if (root.ClientSize.Width < contentMinimum + navigationMinimum + root.SplitterWidth)
+            {
+                return;
+            }
+
+            // Initialise after Dock has given SplitContainer a real width;
+            // setting panel minimums or SplitterDistance on its default
+            // design-time width would throw before the form can be shown.
+            root.Panel1MinSize = contentMinimum;
+            root.Panel2MinSize = navigationMinimum;
+            var maximum = root.ClientSize.Width - navigationMinimum - root.SplitterWidth;
+            root.SplitterDistance = Math.Clamp(root.ClientSize.Width - 188, contentMinimum, maximum);
+            splitInitialized = true;
+        };
+        root.Panel1.BackColor = UiPalette.Canvas;
+        root.Panel2.BackColor = UiPalette.Canvas;
+        root.Panel2.Paint += (_, args) =>
+        {
+            using var divider = new Pen(UiPalette.CardBorder);
+            args.Graphics.DrawLine(divider, 0, 0, 0, root.Panel2.ClientSize.Height);
+        };
 
         var main = new TableLayoutPanel
         {
             Dock = DockStyle.Fill,
             ColumnCount = 1,
-            RowCount = 3,
-            BackColor = Color.FromArgb(247, 249, 252),
-            Padding = new Padding(24, 20, 24, 12),
+            RowCount = 2,
+            BackColor = UiPalette.Canvas,
+            Padding = new Padding(28, 24, 22, 14),
         };
-        main.RowStyles.Add(new RowStyle(SizeType.AutoSize));
         main.RowStyles.Add(new RowStyle(SizeType.Percent, 100F));
         main.RowStyles.Add(new RowStyle(SizeType.AutoSize));
-        _pageTitleLabel.AutoSize = true;
-        _pageTitleLabel.Font = new Font(Font.FontFamily, 18F, FontStyle.Bold);
-        _pageTitleLabel.Margin = new Padding(0, 0, 0, 14);
-        _pageTitleLabel.Text = "首页";
-        main.Controls.Add(_pageTitleLabel, 0, 0);
-        main.Controls.Add(_pageHost, 0, 1);
+        main.Controls.Add(_pageHost, 0, 0);
         _statusLabel.AutoSize = true;
         _statusLabel.ForeColor = Color.FromArgb(97, 108, 124);
         _statusLabel.Margin = new Padding(0, 10, 0, 0);
         _statusLabel.Text = "正在读取本地数据…";
-        main.Controls.Add(_statusLabel, 0, 2);
+        main.Controls.Add(_statusLabel, 0, 1);
 
         var navigation = new Panel
         {
             Dock = DockStyle.Fill,
-            BackColor = Color.FromArgb(25, 34, 50),
-            Padding = new Padding(12, 20, 12, 18),
+            BackColor = Color.Transparent,
+            Padding = new Padding(16, 26, 16, 18),
+        };
+        navigation.Paint += (_, args) =>
+        {
+            using var divider = new Pen(UiPalette.CardBorder);
+            args.Graphics.DrawLine(divider, 0, 0, 0, navigation.ClientSize.Height);
         };
         var navigationLayout = new TableLayoutPanel
         {
             Dock = DockStyle.Fill,
             ColumnCount = 1,
             RowCount = NavigationItems.Length + 4,
+            BackColor = Color.Transparent,
         };
         navigationLayout.RowStyles.Add(new RowStyle(SizeType.AutoSize));
         var brand = new Label
         {
             AutoSize = true,
             Text = "WFly",
-            ForeColor = Color.White,
-            Font = new Font(Font.FontFamily, 17F, FontStyle.Bold),
-            Margin = new Padding(8, 0, 0, 22),
+            ForeColor = UiPalette.Ink,
+            Font = new Font(Font.FontFamily, 19F, FontStyle.Bold),
+            Margin = new Padding(10, 0, 0, 26),
         };
         navigationLayout.Controls.Add(brand, 0, 0);
 
@@ -233,43 +266,29 @@ internal sealed partial class DashboardForm : Form
             {
                 Text = page,
                 Dock = DockStyle.Top,
-                Height = 42,
+                Height = 44,
                 FlatStyle = FlatStyle.Flat,
                 FlatAppearance = { BorderSize = 0 },
                 TextAlign = ContentAlignment.MiddleLeft,
-                Padding = new Padding(12, 0, 0, 0),
-                ForeColor = Color.FromArgb(214, 222, 237),
-                BackColor = Color.FromArgb(25, 34, 50),
+                Padding = new Padding(14, 0, 0, 0),
+                ForeColor = UiPalette.MutedInk,
+                BackColor = Color.Transparent,
                 TabStop = true,
-                Margin = new Padding(0, 2, 0, 2),
+                Margin = new Padding(0, 3, 0, 3),
+                Font = new Font(Font.FontFamily, 10F, FontStyle.Regular),
             };
+            button.FlatAppearance.MouseOverBackColor = UiPalette.Hover;
+            button.FlatAppearance.MouseDownBackColor = UiPalette.AccentSoft;
             button.Click += (_, _) => ShowPage(page);
             navigationLayout.Controls.Add(button, 0, index + 1);
             _navigationButtons.Add(page, button);
         }
 
         navigationLayout.RowStyles.Add(new RowStyle(SizeType.Percent, 100F));
-        var dataCaption = new Label
-        {
-            AutoSize = true,
-            Text = "便携数据目录",
-            ForeColor = Color.FromArgb(132, 146, 170),
-            Margin = new Padding(8, 12, 0, 0),
-        };
-        navigationLayout.Controls.Add(dataCaption, 0, NavigationItems.Length + 2);
-        var dataPath = new Label
-        {
-            AutoSize = true,
-            MaximumSize = new Size(125, 0),
-            Text = _paths.RootDirectory,
-            ForeColor = Color.FromArgb(177, 188, 207),
-            Margin = new Padding(8, 3, 0, 0),
-        };
-        navigationLayout.Controls.Add(dataPath, 0, NavigationItems.Length + 3);
         navigation.Controls.Add(navigationLayout);
 
-        root.Controls.Add(main, 0, 0);
-        root.Controls.Add(navigation, 1, 0);
+        root.Panel1.Controls.Add(main);
+        root.Panel2.Controls.Add(navigation);
         Controls.Add(root);
         ShowPage("首页");
     }
@@ -282,12 +301,12 @@ internal sealed partial class DashboardForm : Form
         }
 
         _currentPage = page;
-        _pageTitleLabel.Text = page;
         foreach (var (name, button) in _navigationButtons)
         {
             var selected = string.Equals(name, page, StringComparison.Ordinal);
-            button.BackColor = selected ? Color.FromArgb(53, 79, 123) : Color.FromArgb(25, 34, 50);
-            button.ForeColor = selected ? Color.White : Color.FromArgb(214, 222, 237);
+            button.BackColor = selected ? UiPalette.AccentSoft : Color.Transparent;
+            button.ForeColor = selected ? UiPalette.Accent : UiPalette.MutedInk;
+            button.Font = new Font(Font.FontFamily, 10F, selected ? FontStyle.Bold : FontStyle.Regular);
         }
 
         if (!_pages.TryGetValue(page, out var pageControl))
@@ -326,7 +345,7 @@ internal sealed partial class DashboardForm : Form
             AutoSize = true,
             AutoSizeMode = AutoSizeMode.GrowAndShrink,
             ColumnCount = 2,
-            RowCount = 4,
+            RowCount = 2,
             Dock = DockStyle.Top,
             Padding = new Padding(0, 0, 0, 18),
         };
@@ -344,34 +363,13 @@ internal sealed partial class DashboardForm : Form
         overview.Controls.Add(overviewLayout);
         layout.Controls.Add(overview, 0, 0);
 
-        var actions = CreateGroup("运行控制");
-        var actionsLayout = new FlowLayoutPanel { Dock = DockStyle.Fill, Padding = new Padding(10), FlowDirection = FlowDirection.TopDown, WrapContents = false, AutoSize = true };
-        _homeStartButton = CreatePrimaryButton("启动选中节点");
-        _homeStartButton.Click += async (_, _) => await StartSelectedNodeAsync();
-        _homeStopButton = new Button { Text = "停止内核", AutoSize = true };
-        _homeStopButton.Click += async (_, _) => await StopRunningCoreAsync();
-        var hint = new Label { AutoSize = true, MaximumSize = new Size(380, 0), ForeColor = Color.FromArgb(101, 112, 129), Text = "节点需先归属于节点组；首次运行前请在设置中下载安装相应内核。" };
-        actionsLayout.Controls.Add(_homeStartButton);
-        actionsLayout.Controls.Add(_homeStopButton);
-        actionsLayout.Controls.Add(hint);
-        actions.Controls.Add(actionsLayout);
-        layout.Controls.Add(actions, 1, 0);
-
         var modeGroup = CreateGroup("代理模式");
-        var modeLayout = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 1, RowCount = 2, Padding = new Padding(10) };
-        _proxyModeSelector = new ProxyModeSelector { Dock = DockStyle.Top, BackColor = Color.White };
+        var modeLayout = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 1, RowCount = 1, Padding = new Padding(10) };
+        _proxyModeSelector = new ProxyModeSelector { Dock = DockStyle.Top, BackColor = UiPalette.Card, ForeColor = UiPalette.Ink };
         _proxyModeSelector.ModeChanged += async (_, _) => await HandleProxyModeChangedAsync();
-        var modeHint = new Label
-        {
-            AutoSize = true,
-            MaximumSize = new Size(430, 0),
-            ForeColor = Color.FromArgb(101, 112, 129),
-            Text = "系统代理仅指向本机 127.0.0.1；TUN 需要管理员权限，并会在下次启动时写入 sing-box 配置。",
-        };
         modeLayout.Controls.Add(_proxyModeSelector, 0, 0);
-        modeLayout.Controls.Add(modeHint, 0, 1);
         modeGroup.Controls.Add(modeLayout);
-        layout.Controls.Add(modeGroup, 0, 1);
+        layout.Controls.Add(modeGroup, 1, 0);
 
         var egress = CreateGroup("IP 出口检测与真实延迟");
         var egressLayout = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 2, RowCount = 4, Padding = new Padding(10) };
@@ -380,29 +378,19 @@ internal sealed partial class DashboardForm : Form
         _homeIpLabel = AddValueRow(egressLayout, "出口 IP", 0);
         _homeIpTypeLabel = AddValueRow(egressLayout, "IP 类型", 1);
         _homeGoogleLatencyLabel = AddValueRow(egressLayout, "Google", 2);
-        var checkEgressButton = new Button { Text = "检测", AutoSize = true, Anchor = AnchorStyles.Left };
+        var checkEgressButton = CreateSecondaryButton("检测");
+        checkEgressButton.Anchor = AnchorStyles.Left;
         checkEgressButton.Click += async (_, _) => await CheckEgressAsync();
         egressLayout.Controls.Add(checkEgressButton, 1, 3);
         egress.Controls.Add(egressLayout);
-        layout.Controls.Add(egress, 1, 1);
+        layout.Controls.Add(egress, 0, 1);
 
         var trafficGroup = CreateGroup("实时流量");
-        _trafficChart = new TrafficChartControl { Dock = DockStyle.Fill, Margin = new Padding(8), BackColor = Color.White };
+        _trafficChart = new TrafficChartControl { Dock = DockStyle.Fill, Margin = new Padding(8), BackColor = UiPalette.Card };
         trafficGroup.Controls.Add(_trafficChart);
-        trafficGroup.MinimumSize = new Size(640, 285);
-        layout.Controls.Add(trafficGroup, 0, 2);
-        layout.SetColumnSpan(trafficGroup, 2);
+        trafficGroup.MinimumSize = new Size(300, 330);
+        layout.Controls.Add(trafficGroup, 1, 1);
 
-        var privacyNote = new Label
-        {
-            AutoSize = true,
-            MaximumSize = new Size(900, 0),
-            Text = "IP 类型不会凭地址猜测；没有接入信誉数据库时会显示“未知”。流量曲线仅保存在内存；代理来自核心 API，直连以主机接口总量扣除代理计数估算，鼠标悬停可查看每个采样点。",
-            ForeColor = Color.FromArgb(101, 112, 129),
-            Margin = new Padding(4, 12, 0, 0),
-        };
-        layout.Controls.Add(privacyNote, 0, 3);
-        layout.SetColumnSpan(privacyNote, 2);
         root.Controls.Add(layout);
         return root;
     }
@@ -410,9 +398,10 @@ internal sealed partial class DashboardForm : Form
     private Control BuildConnectionsPage()
     {
         var root = CreateScrollablePage();
-        var header = CreatePageHeader("运行中的连接", "通过 sing-box / Mihomo 的本机 Clash API 读取；没有启用控制器时不会伪造连接记录。");
+        var header = CreatePageHeader("运行中的连接");
         root.Controls.Add(header);
-        var refresh = new Button { Text = "刷新连接", AutoSize = true, Margin = new Padding(0, 0, 0, 10) };
+        var refresh = CreateSecondaryButton("刷新连接");
+        refresh.Margin = new Padding(0, 0, 0, 10);
         refresh.Click += async (_, _) => await RefreshConnectionsAsync();
         root.Controls.Add(refresh);
         _connectionGrid = CreateGrid();
@@ -433,11 +422,11 @@ internal sealed partial class DashboardForm : Form
     private Control BuildLogsPage()
     {
         var root = CreateScrollablePage();
-        root.Controls.Add(CreatePageHeader("日志", "显示当前进程的全部内存日志。只有点击导出时才会写入 data/exports。"));
+        root.Controls.Add(CreatePageHeader("日志"));
         var actions = new FlowLayoutPanel { AutoSize = true, Margin = new Padding(0, 0, 0, 10) };
-        var exportButton = new Button { Text = "导出日志", AutoSize = true };
+        var exportButton = CreateSecondaryButton("导出日志");
         exportButton.Click += async (_, _) => await ExportLogsAsync();
-        var clearButton = new Button { Text = "清空内存日志", AutoSize = true };
+        var clearButton = CreateSecondaryButton("清空内存日志");
         clearButton.Click += (_, _) =>
         {
             _logStore.Clear();
@@ -468,7 +457,7 @@ internal sealed partial class DashboardForm : Form
     private Control BuildTestsPage()
     {
         var root = CreateScrollablePage();
-        root.Controls.Add(CreatePageHeader("测试", "点击后通过本机代理测试国外站点的真实 HTTP 到达时间；未启动代理时可切换为直连。"));
+        root.Controls.Add(CreatePageHeader("测试"));
         var controls = new FlowLayoutPanel { AutoSize = true, Margin = new Padding(0, 0, 0, 10) };
         var throughProxy = new CheckBox { Text = "通过本地代理", Checked = true, AutoSize = true, Padding = new Padding(0, 6, 8, 0) };
         var runButton = CreatePrimaryButton("开始延迟测试");
@@ -495,13 +484,48 @@ internal sealed partial class DashboardForm : Form
     private Control BuildSettingsPage()
     {
         var root = CreateScrollablePage();
-        root.Controls.Add(CreatePageHeader("设置", "内核仅从固定的官方 GitHub Release 下载、校验 SHA-256 后安装到 data/cores。"));
+        var content = new TableLayoutPanel
+        {
+            AutoSize = true,
+            AutoSizeMode = AutoSizeMode.GrowAndShrink,
+            Dock = DockStyle.Top,
+            ColumnCount = 1,
+            RowCount = 3,
+        };
+        content.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100F));
+        content.RowStyles.Add(new RowStyle(SizeType.AutoSize));
+        content.RowStyles.Add(new RowStyle(SizeType.AutoSize));
+        content.RowStyles.Add(new RowStyle(SizeType.AutoSize));
+        content.Controls.Add(CreatePageHeader("设置"), 0, 0);
+
         var general = CreateGroup("本地运行设置");
-        var generalLayout = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 2, RowCount = 5, Padding = new Padding(10) };
+        general.Dock = DockStyle.Fill;
+        var generalLayout = new TableLayoutPanel
+        {
+            Dock = DockStyle.Fill,
+            AutoSize = true,
+            AutoSizeMode = AutoSizeMode.GrowAndShrink,
+            ColumnCount = 2,
+            RowCount = 5,
+            Padding = new Padding(4),
+        };
         generalLayout.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
         generalLayout.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100F));
-        generalLayout.Controls.Add(new Label { Text = "默认内核", AutoSize = true, Anchor = AnchorStyles.Left }, 0, 0);
-        _settingsCoreSelector = new ComboBox { DropDownStyle = ComboBoxStyle.DropDownList, Dock = DockStyle.Left, Width = 240, DisplayMember = nameof(CoreDefinition.DisplayName), ValueMember = nameof(CoreDefinition.Id), DataSource = CoreRegistry.All.ToArray() };
+        for (var row = 0; row < 5; row++)
+        {
+            generalLayout.RowStyles.Add(new RowStyle(SizeType.AutoSize));
+        }
+
+        generalLayout.Controls.Add(CreateSettingsLabel("默认内核"), 0, 0);
+        _settingsCoreSelector = new ComboBox
+        {
+            DropDownStyle = ComboBoxStyle.DropDownList,
+            Dock = DockStyle.Fill,
+            MinimumSize = new Size(260, 30),
+            DisplayMember = nameof(CoreDefinition.DisplayName),
+            ValueMember = nameof(CoreDefinition.Id),
+            DataSource = CoreRegistry.All.ToArray(),
+        };
         _settingsCoreSelector.SelectedIndexChanged += (_, _) =>
         {
             if (!_isLoading)
@@ -510,54 +534,63 @@ internal sealed partial class DashboardForm : Form
             }
         };
         generalLayout.Controls.Add(_settingsCoreSelector, 1, 0);
-        generalLayout.Controls.Add(new Label { Text = "本地混合端口", AutoSize = true, Anchor = AnchorStyles.Left }, 0, 1);
-        _mixedPortInput = new NumericUpDown { Minimum = 1, Maximum = 65535, Width = 140, Dock = DockStyle.Left };
+        generalLayout.Controls.Add(CreateSettingsLabel("本地混合端口"), 0, 1);
+        _mixedPortInput = new NumericUpDown { Minimum = 1, Maximum = 65535, Width = 160, Anchor = AnchorStyles.Left };
         generalLayout.Controls.Add(_mixedPortInput, 1, 1);
-        generalLayout.Controls.Add(new Label { Text = "TUN 接口名", AutoSize = true, Anchor = AnchorStyles.Left }, 0, 2);
-        _tunNameInput = new TextBox { Width = 240, Dock = DockStyle.Left };
+        generalLayout.Controls.Add(CreateSettingsLabel("TUN 接口名"), 0, 2);
+        _tunNameInput = new TextBox { Dock = DockStyle.Fill, MinimumSize = new Size(260, 30) };
         generalLayout.Controls.Add(_tunNameInput, 1, 2);
-        generalLayout.Controls.Add(new Label { Text = "原生配置文件", AutoSize = true, Anchor = AnchorStyles.Left }, 0, 3);
-        var nativeConfigPanel = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 2, RowCount = 1 };
+        generalLayout.Controls.Add(CreateSettingsLabel("原生配置文件"), 0, 3);
+        var nativeConfigPanel = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 2, RowCount = 1, Margin = Padding.Empty };
         nativeConfigPanel.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100F));
         nativeConfigPanel.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
-        _nativeConfigPathTextBox = new TextBox { Dock = DockStyle.Fill, ReadOnly = true, PlaceholderText = "用于 Mihomo / Xray-core 的已导入本地配置" };
-        var importNativeConfig = new Button { Text = "导入…", AutoSize = true };
+        _nativeConfigPathTextBox = new TextBox { Dock = DockStyle.Fill, ReadOnly = true, MinimumSize = new Size(260, 30), PlaceholderText = "用于 Mihomo / Xray-core 的已导入本地配置" };
+        var importNativeConfig = CreateSecondaryButton("导入…");
         importNativeConfig.Click += async (_, _) => await ImportNativeConfigAsync();
         nativeConfigPanel.Controls.Add(_nativeConfigPathTextBox, 0, 0);
         nativeConfigPanel.Controls.Add(importNativeConfig, 1, 0);
         generalLayout.Controls.Add(nativeConfigPanel, 1, 3);
         var saveSettings = CreatePrimaryButton("保存设置");
+        saveSettings.Anchor = AnchorStyles.Left;
+        saveSettings.Margin = new Padding(0, 10, 0, 0);
         saveSettings.Click += async (_, _) => await SaveGeneralSettingsAsync();
         generalLayout.Controls.Add(saveSettings, 1, 4);
         general.Controls.Add(generalLayout);
-        root.Controls.Add(general);
+        content.Controls.Add(general, 0, 1);
 
         var cores = CreateGroup("内核下载与更新");
-        var coreLayout = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 1, RowCount = 3, Padding = new Padding(10) };
-        _installedCoreLabel = new Label { AutoSize = true, ForeColor = Color.FromArgb(101, 112, 129), Text = "正在读取已安装内核…" };
+        cores.Dock = DockStyle.Fill;
+        var coreLayout = new TableLayoutPanel
+        {
+            Dock = DockStyle.Fill,
+            AutoSize = true,
+            AutoSizeMode = AutoSizeMode.GrowAndShrink,
+            ColumnCount = 1,
+            RowCount = 3,
+            Padding = new Padding(4),
+        };
+        coreLayout.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100F));
+        coreLayout.RowStyles.Add(new RowStyle(SizeType.AutoSize));
+        coreLayout.RowStyles.Add(new RowStyle(SizeType.Absolute, 210F));
+        coreLayout.RowStyles.Add(new RowStyle(SizeType.AutoSize));
+        _installedCoreLabel = new Label { AutoSize = true, ForeColor = UiPalette.MutedInk, Text = "正在读取已安装内核…", Margin = new Padding(0, 0, 0, 8) };
         coreLayout.Controls.Add(_installedCoreLabel, 0, 0);
         _coreGrid = CreateGrid();
-        _coreGrid.Height = 180;
+        _coreGrid.Dock = DockStyle.Fill;
         _coreGrid.Columns.Add("Name", "内核");
         _coreGrid.Columns.Add("Id", "标识");
         _coreGrid.Columns.Add("Installed", "已安装版本");
         coreLayout.Controls.Add(_coreGrid, 0, 1);
         var downloadCore = CreatePrimaryButton("检查并下载选中内核");
+        downloadCore.Anchor = AnchorStyles.Left;
+        downloadCore.Margin = new Padding(0, 10, 0, 0);
         downloadCore.Click += async (_, _) => await DownloadSelectedCoreAsync();
         coreLayout.Controls.Add(downloadCore, 0, 2);
         cores.Controls.Add(coreLayout);
-        root.Controls.Add(cores);
+        content.Controls.Add(cores, 0, 2);
 
-        var dataGroup = CreateGroup("数据位置");
-        var dataLabel = new Label
-        {
-            AutoSize = true,
-            Padding = new Padding(10),
-            MaximumSize = new Size(850, 0),
-            Text = $"所有 WFly 运行数据：{_paths.RootDirectory}\n包含内核、节点组、节点、规则、配置和手动导出的日志。不会在 C:\\Users 下创建新的 WFly 数据。",
-        };
-        dataGroup.Controls.Add(dataLabel);
-        root.Controls.Add(dataGroup);
+        root.Controls.Add(content);
+
         return root;
     }
 
@@ -567,7 +600,17 @@ internal sealed partial class DashboardForm : Form
         try
         {
             _settings = await _settingsStore.LoadAsync();
-            if (NormalizeNativeConfigSettings())
+            var settingsChanged = NormalizeNativeConfigSettings();
+            // A core is not persisted across GUI launches.  Keep the three
+            // position control honest: without a running core the middle
+            // position is the only active-safe state.
+            if (!_processService.IsRunning && _settings.ProxyMode != ProxyMode.Off)
+            {
+                _settings.ProxyMode = ProxyMode.Off;
+                settingsChanged = true;
+            }
+
+            if (settingsChanged)
             {
                 await _settingsStore.SaveAsync(_settings);
             }
@@ -689,64 +732,117 @@ internal sealed partial class DashboardForm : Form
         _homeCoreLabel!.Text = selectedNode is null ? "—" : CoreRegistry.GetById(selectedNode.CoreId)?.DisplayName ?? selectedNode.CoreId;
         _homeRunningLabel!.Text = _processService.IsRunning ? "运行中" : "已停止";
         _homeConnectionCountLabel!.Text = "等待控制器数据";
-        _homeStartButton!.Enabled = !_operationBusy && !_processService.IsRunning && selectedNode is { IsEnabled: true };
-        _homeStopButton!.Enabled = !_operationBusy && _processService.IsRunning;
         if (_proxyModeSelector is not null && _proxyModeSelector.Mode != _settings.ProxyMode)
         {
             _proxyModeSelector.Mode = _settings.ProxyMode;
+        }
+
+        if (_proxyModeSelector is not null)
+        {
+            _proxyModeSelector.Enabled = !_operationBusy && !_proxyModeTransitionBusy;
         }
     }
 
     private async Task HandleProxyModeChangedAsync()
     {
-        if (_isLoading || _proxyModeSelector is null || _proxyModeSelector.Mode == _settings.ProxyMode)
+        if (_isLoading ||
+            _proxyModeTransitionBusy ||
+            _proxyModeSelector is null ||
+            _proxyModeSelector.Mode == _settings.ProxyMode)
         {
             return;
         }
 
         var previousMode = _settings.ProxyMode;
         var selectedMode = _proxyModeSelector.Mode;
+        _proxyModeTransitionBusy = true;
         try
         {
-            // The TUN inbound is part of the running sing-box configuration.
-            // Merely changing the selector cannot remove it, so stop the core
-            // whenever entering or leaving TUN. This prevents a stale TUN
-            // interface from continuing to capture traffic after "关闭代理".
-            if (_processService.IsRunning && (previousMode == ProxyMode.Tun || selectedMode == ProxyMode.Tun))
+            // The middle position is the only stopped state.  Sliding to
+            // either end starts the selected node; moving between endpoints
+            // regenerates the configuration so system-proxy/TUN state cannot
+            // leak from the previous run.
+            if (selectedMode == ProxyMode.Off)
             {
-                await _processService.StopAsync();
-                await RestoreSystemProxyAsync();
-                _settings.ProxyMode = selectedMode;
+                _settings.ProxyMode = ProxyMode.Off;
+                if (_processService.IsRunning)
+                {
+                    var stopped = await StopRunningCoreAsync();
+                    if (!stopped || _processService.IsRunning || _settings.SystemProxyLease is not null)
+                    {
+                        throw new InvalidOperationException("未能完整停止内核或恢复系统代理，当前模式保持不变。");
+                    }
+                }
+                else
+                {
+                    await RestoreSystemProxyAsync();
+                    SetStatus("代理已关闭。");
+                }
+
                 await _settingsStore.SaveAsync(_settings);
-                SetStatus($"内核已停止；请重新启动以应用{GetProxyModeDisplay(selectedMode)}。");
-                PostLog("SYS", $"代理模式已选择：{GetProxyModeDisplay(selectedMode)}；为安全应用 TUN 切换，已停止内核。");
+                PostLog("SYS", "代理开关已回到关闭位置，内核已停止。");
+                return;
+            }
+
+            var selectedNode = SelectedNode;
+            if (selectedNode is null || !selectedNode.IsEnabled)
+            {
+                _settings.ProxyMode = ProxyMode.Off;
+                await _settingsStore.SaveAsync(_settings);
+                _proxyModeSelector.Mode = ProxyMode.Off;
+                MessageBox.Show(
+                    this,
+                    "请先在节点组中选择一个已启用的节点，再开启代理。",
+                    "WFly",
+                    MessageBoxButtons.OK,
+                    MessageBoxIcon.Information);
                 return;
             }
 
             _settings.ProxyMode = selectedMode;
-            if (_settings.ProxyMode == ProxyMode.Off)
+            await _settingsStore.SaveAsync(_settings);
+
+            if (_processService.IsRunning)
+            {
+                var stopped = await StopRunningCoreAsync();
+                if (!stopped || _processService.IsRunning || _settings.SystemProxyLease is not null)
+                {
+                    throw new InvalidOperationException("无法完整停止当前内核或恢复系统代理，因此没有切换代理模式。");
+                }
+            }
+            else
             {
                 await RestoreSystemProxyAsync();
-            }
-            else if (_settings.ProxyMode == ProxyMode.SystemProxy && _processService.IsRunning)
-            {
-                await ApplySystemProxyAsync();
-            }
-            else if (_settings.ProxyMode == ProxyMode.Tun && _processService.IsRunning)
-            {
-                await RestoreSystemProxyAsync();
-                SetStatus("TUN 模式将在停止并重新启动 sing-box 后生效。");
             }
 
-            await _settingsStore.SaveAsync(_settings);
-            PostLog("SYS", $"代理模式已选择：{GetProxyModeDisplay(_settings.ProxyMode)}。");
+            await StartSelectedNodeAsync();
+            if (!_processService.IsRunning)
+            {
+                _settings.ProxyMode = ProxyMode.Off;
+                await _settingsStore.SaveAsync(_settings);
+                _proxyModeSelector.Mode = ProxyMode.Off;
+                SetStatus("内核未能启动，代理已保持关闭。");
+                return;
+            }
+
+            PostLog("SYS", $"代理开关已开启：{GetProxyModeDisplay(_settings.ProxyMode)}。");
         }
         catch (Exception exception)
         {
-            _settings.ProxyMode = previousMode;
-            _proxyModeSelector.Mode = previousMode;
+            // If the old core is still alive, retain the old visual state so
+            // the selector never claims that proxy traffic has been stopped.
+            // A failed new start has no running core, so it safely falls back
+            // to the middle position.
+            var fallbackMode = _processService.IsRunning ? previousMode : ProxyMode.Off;
+            _settings.ProxyMode = fallbackMode;
+            _proxyModeSelector.Mode = fallbackMode;
             await _settingsStore.SaveAsync(_settings);
             ShowError("无法切换代理模式", exception);
+        }
+        finally
+        {
+            _proxyModeTransitionBusy = false;
+            RefreshHomePage();
         }
     }
 
@@ -1213,9 +1309,9 @@ internal sealed partial class DashboardForm : Form
         });
     }
 
-    private async Task StopRunningCoreAsync()
+    private async Task<bool> StopRunningCoreAsync()
     {
-        await RunOperationAsync("正在停止内核…", async cancellationToken =>
+        return await RunOperationAsync("正在停止内核…", async cancellationToken =>
         {
             await _processService.StopAsync(cancellationToken);
             await RestoreSystemProxyAsync();
@@ -1386,11 +1482,11 @@ internal sealed partial class DashboardForm : Form
         }
     }
 
-    private async Task RunOperationAsync(string status, Func<CancellationToken, Task> operation)
+    private async Task<bool> RunOperationAsync(string status, Func<CancellationToken, Task> operation)
     {
         if (_operationBusy)
         {
-            return;
+            return false;
         }
 
         _operationBusy = true;
@@ -1403,14 +1499,18 @@ internal sealed partial class DashboardForm : Form
             {
                 SetStatus("完成。");
             }
+
+            return true;
         }
         catch (OperationCanceledException)
         {
             SetStatus("已取消。");
+            return false;
         }
         catch (Exception exception)
         {
             ShowError(status, exception);
+            return false;
         }
         finally
         {
@@ -1449,7 +1549,10 @@ internal sealed partial class DashboardForm : Form
 
     private void OnCoreRunningStateChanged(bool isRunning)
     {
-        if (!isRunning)
+        // The process event may be queued behind a rapid Stop → Start mode
+        // switch.  Only clear this session's metadata when there is still no
+        // live core at the moment the notification is handled.
+        if (!isRunning && !_processService.IsRunning)
         {
             _runningCoreId = null;
             _runningMixedProxyPort = null;
@@ -1469,10 +1572,19 @@ internal sealed partial class DashboardForm : Form
                     return;
                 }
 
-                SetStatus(isRunning ? "内核正在运行。" : "内核已停止。");
-                if (!isRunning && _settings.SystemProxyLease is not null)
+                // A queued "stopped" notification from the old process can
+                // arrive after a mode switch has already started a new core.
+                // Never let that stale event reset the fresh session.
+                if (!isRunning && _processService.IsRunning)
                 {
-                    _ = RestoreSystemProxyAsync();
+                    RefreshHomePage();
+                    return;
+                }
+
+                SetStatus(isRunning ? "内核正在运行。" : "内核已停止。");
+                if (!isRunning && !_proxyModeTransitionBusy && !_closeCleanupInProgress)
+                {
+                    _ = HandleUnexpectedCoreExitAsync();
                 }
 
                 RefreshHomePage();
@@ -1481,6 +1593,43 @@ internal sealed partial class DashboardForm : Form
         catch (InvalidOperationException)
         {
             // The window handle can disappear between the checks and BeginInvoke.
+        }
+    }
+
+    private async Task HandleUnexpectedCoreExitAsync()
+    {
+        if (_proxyModeTransitionBusy || _closeCleanupInProgress || _processService.IsRunning)
+        {
+            return;
+        }
+
+        // A process can terminate independently of a user click.  Move the
+        // selector before awaiting any I/O so it never advertises an active
+        // system proxy or TUN session that no longer has a core behind it.
+        var hadActiveMode = _settings.ProxyMode != ProxyMode.Off;
+        _settings.ProxyMode = ProxyMode.Off;
+        if (hadActiveMode && _proxyModeSelector is not null && _proxyModeSelector.Mode != ProxyMode.Off)
+        {
+            _proxyModeSelector.Mode = ProxyMode.Off;
+        }
+
+        try
+        {
+            await RestoreSystemProxyAsync();
+            await _settingsStore.SaveAsync(_settings);
+            if (hadActiveMode)
+            {
+                PostLog("SYS", "内核已意外退出，代理开关已回到关闭位置。");
+            }
+        }
+        catch (Exception exception)
+        {
+            PostLog("ERR", $"内核退出后的系统代理恢复失败：{exception.Message}");
+            SetStatus("内核已停止；系统代理恢复失败，请在设置中检查状态。");
+        }
+        finally
+        {
+            RefreshHomePage();
         }
     }
 
@@ -1586,9 +1735,21 @@ internal sealed partial class DashboardForm : Form
             {
                 await _processService.StopAsync();
             }
+        }
+        catch
+        {
+            // Continue with the independently safe system-proxy restore below.
+        }
 
+        try
+        {
+            // A stop failure must never prevent the conditional WinINet
+            // restore.  RestoreIfOwned refuses to overwrite a user or other
+            // application's later change, so it is safe to attempt here.
             var result = _systemProxyService.RestoreIfOwned(_settings.SystemProxyLease);
-            if (result.Status is WindowsSystemProxyRestoreStatus.Restored or WindowsSystemProxyRestoreStatus.NoLease)
+            if (result.Status is WindowsSystemProxyRestoreStatus.Restored or
+                WindowsSystemProxyRestoreStatus.NoLease or
+                WindowsSystemProxyRestoreStatus.CurrentSettingsChanged)
             {
                 _settings.SystemProxyLease = null;
                 await _settingsStore.SaveAsync(_settings);
@@ -1635,40 +1796,47 @@ internal sealed partial class DashboardForm : Form
     private static Panel CreateScrollablePage() => new()
     {
         AutoScroll = true,
-        BackColor = Color.FromArgb(247, 249, 252),
-        Padding = new Padding(0, 0, 8, 12),
+        BackColor = UiPalette.Canvas,
+        Padding = new Padding(2, 2, 10, 16),
     };
 
-    private static GroupBox CreateGroup(string title) => new()
+    private static FrostedGroupBox CreateGroup(string title) => new()
     {
         Text = title,
         Dock = DockStyle.Top,
         AutoSize = true,
         AutoSizeMode = AutoSizeMode.GrowAndShrink,
-        BackColor = Color.White,
-        Padding = new Padding(10),
-        Margin = new Padding(0, 0, 12, 12),
     };
 
     private static Label AddValueRow(TableLayoutPanel layout, string label, int row)
     {
         layout.RowStyles.Add(new RowStyle(SizeType.AutoSize));
-        var key = new Label { AutoSize = true, Text = label, ForeColor = Color.FromArgb(101, 112, 129), Anchor = AnchorStyles.Left, Margin = new Padding(0, 5, 12, 5) };
+        var key = new Label { AutoSize = true, Text = label, ForeColor = UiPalette.MutedInk, Anchor = AnchorStyles.Left, Margin = new Padding(0, 5, 12, 5) };
         var value = new Label { AutoSize = true, Text = "—", Anchor = AnchorStyles.Left, Margin = new Padding(0, 5, 0, 5), MaximumSize = new Size(330, 0) };
         layout.Controls.Add(key, 0, row);
         layout.Controls.Add(value, 1, row);
         return value;
     }
 
-    private static Label CreatePageHeader(string title, string subtitle)
+    private static Label CreateSettingsLabel(string text) => new()
+    {
+        Text = text,
+        AutoSize = true,
+        ForeColor = UiPalette.MutedInk,
+        Anchor = AnchorStyles.Left,
+        Margin = new Padding(0, 6, 18, 6),
+    };
+
+    private static Label CreatePageHeader(string title)
     {
         return new Label
         {
             AutoSize = true,
             MaximumSize = new Size(900, 0),
-            Text = $"{title}\n{subtitle}",
-            Font = new Font("Microsoft YaHei UI", 10F, FontStyle.Bold),
-            Margin = new Padding(0, 0, 0, 12),
+            Text = title,
+            Font = new Font("Microsoft YaHei UI", 18F, FontStyle.Bold),
+            ForeColor = UiPalette.Ink,
+            Margin = new Padding(2, 0, 0, 14),
         };
     }
 
@@ -1676,12 +1844,31 @@ internal sealed partial class DashboardForm : Form
     {
         Text = text,
         AutoSize = true,
-        BackColor = Color.FromArgb(53, 121, 246),
+        BackColor = UiPalette.Accent,
         ForeColor = Color.White,
         FlatStyle = FlatStyle.Flat,
         FlatAppearance = { BorderSize = 0 },
-        Padding = new Padding(10, 4, 10, 4),
+        Padding = new Padding(14, 6, 14, 6),
+        Margin = new Padding(0, 0, 8, 0),
     };
+
+    private static Button CreateSecondaryButton(string text)
+    {
+        var button = new Button
+        {
+            Text = text,
+            AutoSize = true,
+            BackColor = UiPalette.Hover,
+            ForeColor = UiPalette.Ink,
+            FlatStyle = FlatStyle.Flat,
+            Padding = new Padding(12, 5, 12, 5),
+            Margin = new Padding(8, 0, 0, 0),
+        };
+        button.FlatAppearance.BorderColor = UiPalette.CardBorder;
+        button.FlatAppearance.BorderSize = 1;
+        button.FlatAppearance.MouseOverBackColor = UiPalette.AccentSoft;
+        return button;
+    }
 
     private static DataGridView CreateGrid() => new()
     {
@@ -1693,11 +1880,26 @@ internal sealed partial class DashboardForm : Form
         ReadOnly = true,
         MultiSelect = false,
         SelectionMode = DataGridViewSelectionMode.FullRowSelect,
-        BackgroundColor = Color.White,
-        BorderStyle = BorderStyle.FixedSingle,
+        BackgroundColor = UiPalette.Card,
+        BorderStyle = BorderStyle.None,
         RowHeadersVisible = false,
         AutoSizeColumnsMode = DataGridViewAutoSizeColumnsMode.Fill,
-        ColumnHeadersDefaultCellStyle = new DataGridViewCellStyle { BackColor = Color.FromArgb(239, 243, 250), Font = new Font("Microsoft YaHei UI", 9F, FontStyle.Bold) },
+        GridColor = UiPalette.CardBorder,
+        DefaultCellStyle = new DataGridViewCellStyle
+        {
+            BackColor = UiPalette.Card,
+            ForeColor = UiPalette.Ink,
+            SelectionBackColor = UiPalette.AccentSoft,
+            SelectionForeColor = UiPalette.Ink,
+            Padding = new Padding(3, 2, 3, 2),
+        },
+        ColumnHeadersDefaultCellStyle = new DataGridViewCellStyle
+        {
+            BackColor = UiPalette.Hover,
+            ForeColor = UiPalette.Ink,
+            Font = new Font("Microsoft YaHei UI", 9F, FontStyle.Bold),
+            Padding = new Padding(3, 4, 3, 4),
+        },
         EnableHeadersVisualStyles = false,
     };
 

@@ -12,6 +12,7 @@ internal sealed class ProxyModeSelector : Control
 {
     private static readonly string[] Labels = ["系统代理", "关闭代理", "TUN 模式"];
     private ProxyMode _mode = ProxyMode.Off;
+    private bool _dragging;
 
     public ProxyModeSelector()
     {
@@ -66,11 +67,12 @@ internal sealed class ProxyModeSelector : Control
         var railTop = Math.Max(12, (Height - 44) / 2);
         var selectedIndex = (int)_mode;
 
-        using var idleBrush = new SolidBrush(Color.FromArgb(218, 225, 235));
-        using var selectedBrush = new SolidBrush(Color.FromArgb(53, 121, 246));
-        using var selectedOutline = new Pen(Color.FromArgb(28, 84, 190), 2F);
+        var isEnabled = Enabled;
+        using var idleBrush = new SolidBrush(isEnabled ? Color.FromArgb(207, 216, 232) : Color.FromArgb(223, 228, 237));
+        using var selectedBrush = new SolidBrush(isEnabled ? UiPalette.Accent : Color.FromArgb(157, 171, 194));
+        using var selectedOutline = new Pen(isEnabled ? Color.FromArgb(45, 88, 184) : Color.FromArgb(135, 148, 169), 2F);
         using var textBrush = new SolidBrush(ForeColor);
-        using var mutedTextBrush = new SolidBrush(Color.FromArgb(106, 117, 133));
+        using var mutedTextBrush = new SolidBrush(isEnabled ? UiPalette.MutedInk : Color.FromArgb(151, 161, 178));
 
         graphics.FillRoundedRectangle(idleBrush, railLeft, railTop, railRight - railLeft, railHeight, 5);
         graphics.FillRoundedRectangle(selectedBrush, railLeft, railTop, points[selectedIndex].X - railLeft, railHeight, 5);
@@ -118,11 +120,38 @@ internal sealed class ProxyModeSelector : Control
         }
 
         Focus();
-        var points = GetMarkerPoints();
-        var closest = Enumerable.Range(0, points.Length)
-            .OrderBy(index => Math.Abs(points[index].X - e.X))
-            .First();
-        Mode = (ProxyMode)closest;
+        _dragging = true;
+        Capture = true;
+        SelectClosestMode(e.X);
+    }
+
+    protected override void OnMouseMove(MouseEventArgs e)
+    {
+        base.OnMouseMove(e);
+        if (_dragging && e.Button == MouseButtons.Left)
+        {
+            SelectClosestMode(e.X);
+        }
+    }
+
+    protected override void OnMouseUp(MouseEventArgs e)
+    {
+        base.OnMouseUp(e);
+        if (e.Button == MouseButtons.Left)
+        {
+            _dragging = false;
+            Capture = false;
+            SelectClosestMode(e.X);
+        }
+    }
+
+    protected override void OnMouseCaptureChanged(EventArgs e)
+    {
+        base.OnMouseCaptureChanged(e);
+        if (!Capture)
+        {
+            _dragging = false;
+        }
     }
 
     protected override void OnKeyDown(KeyEventArgs e)
@@ -163,6 +192,15 @@ internal sealed class ProxyModeSelector : Control
             new Point(horizontalPadding + usableWidth / 2, centerY),
             new Point(Width - horizontalPadding, centerY),
         ];
+    }
+
+    private void SelectClosestMode(int horizontalPosition)
+    {
+        var points = GetMarkerPoints();
+        var closest = Enumerable.Range(0, points.Length)
+            .OrderBy(index => Math.Abs(points[index].X - horizontalPosition))
+            .First();
+        Mode = (ProxyMode)closest;
     }
 
     private static string GetLabel(ProxyMode mode) => Labels[(int)mode];

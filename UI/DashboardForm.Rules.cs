@@ -2,6 +2,7 @@ using System.Text;
 using System.Globalization;
 using System.Text.Json;
 using WFly.Models;
+using WFly.UI.Controls;
 using WFly.UI.Dialogs;
 
 namespace WFly.UI;
@@ -26,45 +27,45 @@ internal sealed partial class DashboardForm
             Dock = DockStyle.Fill,
             ColumnCount = 2,
             RowCount = 2,
-            BackColor = Color.FromArgb(247, 249, 252),
+            BackColor = UiPalette.Canvas,
         };
         root.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 230));
         root.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100F));
         root.RowStyles.Add(new RowStyle(SizeType.AutoSize));
         root.RowStyles.Add(new RowStyle(SizeType.Percent, 100F));
-        var header = CreatePageHeader("规则", "图形化编辑与 JSON 配置文件双视图。保存时会校验 JSON，并在 data/rules 保留可读副本。 ");
+        var header = CreatePageHeader("规则");
         root.Controls.Add(header, 0, 0);
         root.SetColumnSpan(header, 2);
 
-        var listPanel = new TableLayoutPanel { Dock = DockStyle.Fill, RowCount = 2, Padding = new Padding(0, 0, 12, 0) };
+        var listPanel = new TableLayoutPanel { Dock = DockStyle.Fill, RowCount = 2, Padding = new Padding(0, 0, 12, 0), BackColor = UiPalette.Canvas };
         listPanel.RowStyles.Add(new RowStyle(SizeType.Percent, 100F));
         listPanel.RowStyles.Add(new RowStyle(SizeType.AutoSize));
-        _ruleSetList = new ListBox { Dock = DockStyle.Fill, DisplayMember = nameof(RuleSet.Name), IntegralHeight = false, BackColor = Color.White };
+        _ruleSetList = new ListBox { Dock = DockStyle.Fill, DisplayMember = nameof(RuleSet.Name), IntegralHeight = false, BackColor = UiPalette.Card, ForeColor = UiPalette.Ink };
         _ruleSetList.SelectedIndexChanged += (_, _) => SelectRuleSetFromList();
         listPanel.Controls.Add(_ruleSetList, 0, 0);
-        var ruleSetActions = new FlowLayoutPanel { AutoSize = true, Dock = DockStyle.Fill, Margin = new Padding(0, 8, 0, 0) };
+        var ruleSetActions = new FlowLayoutPanel { AutoSize = true, Dock = DockStyle.Fill, Margin = new Padding(0, 8, 0, 0), BackColor = UiPalette.Canvas };
         var addSet = CreatePrimaryButton("新建规则集");
         addSet.Click += async (_, _) => await AddRuleSetAsync();
-        var deleteSet = new Button { Text = "删除", AutoSize = true };
+        var deleteSet = CreateSecondaryButton("删除");
         deleteSet.Click += async (_, _) => await DeleteActiveRuleSetAsync();
         ruleSetActions.Controls.Add(addSet);
         ruleSetActions.Controls.Add(deleteSet);
         listPanel.Controls.Add(ruleSetActions, 0, 1);
         root.Controls.Add(listPanel, 0, 1);
 
-        var editorTabs = new TabControl { Dock = DockStyle.Fill };
-        var graphicalTab = new TabPage("图形化") { BackColor = Color.FromArgb(247, 249, 252) };
-        var graphicalRoot = new TableLayoutPanel { Dock = DockStyle.Fill, RowCount = 2, Padding = new Padding(10) };
+        var editorTabs = new TabControl { Dock = DockStyle.Fill, BackColor = UiPalette.Canvas };
+        var graphicalTab = new TabPage("图形化") { BackColor = UiPalette.Canvas };
+        var graphicalRoot = new TableLayoutPanel { Dock = DockStyle.Fill, RowCount = 2, Padding = new Padding(10), BackColor = UiPalette.Canvas };
         graphicalRoot.RowStyles.Add(new RowStyle(SizeType.AutoSize));
         graphicalRoot.RowStyles.Add(new RowStyle(SizeType.Percent, 100F));
-        var ruleActions = new FlowLayoutPanel { AutoSize = true, Margin = new Padding(0, 0, 0, 8) };
+        var ruleActions = new FlowLayoutPanel { AutoSize = true, Margin = new Padding(0, 0, 0, 8), BackColor = UiPalette.Canvas };
         var addRule = CreatePrimaryButton("添加规则");
         addRule.Click += async (_, _) => await AddOrEditRuleEntryAsync(null);
-        var editRule = new Button { Text = "编辑", AutoSize = true };
+        var editRule = CreateSecondaryButton("编辑");
         editRule.Click += async (_, _) => await AddOrEditRuleEntryAsync(GetSelectedRuleEntry());
-        var removeRule = new Button { Text = "删除", AutoSize = true };
+        var removeRule = CreateSecondaryButton("删除");
         removeRule.Click += async (_, _) => await DeleteSelectedRuleEntryAsync();
-        var saveGraphical = new Button { Text = "保存图形规则", AutoSize = true };
+        var saveGraphical = CreateSecondaryButton("保存图形规则");
         saveGraphical.Click += async (_, _) => await SaveActiveRuleSetAsync();
         ruleActions.Controls.Add(addRule);
         ruleActions.Controls.Add(editRule);
@@ -83,8 +84,8 @@ internal sealed partial class DashboardForm
         graphicalTab.Controls.Add(graphicalRoot);
         editorTabs.TabPages.Add(graphicalTab);
 
-        var jsonTab = new TabPage("配置文件") { BackColor = Color.FromArgb(247, 249, 252) };
-        var jsonRoot = new TableLayoutPanel { Dock = DockStyle.Fill, RowCount = 2, Padding = new Padding(10) };
+        var jsonTab = new TabPage("配置文件") { BackColor = UiPalette.Canvas };
+        var jsonRoot = new TableLayoutPanel { Dock = DockStyle.Fill, RowCount = 2, Padding = new Padding(10), BackColor = UiPalette.Canvas };
         jsonRoot.RowStyles.Add(new RowStyle(SizeType.Percent, 100F));
         jsonRoot.RowStyles.Add(new RowStyle(SizeType.AutoSize));
         _ruleJsonBox = new RichTextBox
@@ -92,12 +93,13 @@ internal sealed partial class DashboardForm
             Dock = DockStyle.Fill,
             Font = new Font("Cascadia Mono", 9F),
             WordWrap = false,
-            BackColor = Color.White,
+            BackColor = UiPalette.Card,
+            ForeColor = UiPalette.Ink,
             DetectUrls = false,
         };
         jsonRoot.Controls.Add(_ruleJsonBox, 0, 0);
-        var jsonActions = new FlowLayoutPanel { AutoSize = true, Dock = DockStyle.Fill, Margin = new Padding(0, 8, 0, 0) };
-        var formatJson = new Button { Text = "从图形规则刷新 JSON", AutoSize = true };
+        var jsonActions = new FlowLayoutPanel { AutoSize = true, Dock = DockStyle.Fill, Margin = new Padding(0, 8, 0, 0), BackColor = UiPalette.Canvas };
+        var formatJson = CreateSecondaryButton("从图形规则刷新 JSON");
         formatJson.Click += (_, _) => RenderActiveRuleSetJson();
         var applyJson = CreatePrimaryButton("校验并保存 JSON");
         applyJson.Click += async (_, _) => await SaveRuleSetFromJsonAsync();
