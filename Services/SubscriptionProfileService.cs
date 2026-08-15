@@ -34,10 +34,7 @@ internal sealed class SubscriptionProfileService
         var subscription = await DownloadAndParseAsync(subscriptionUrl, cancellationToken);
 
         var profile = BuildSingBoxProfile(subscription.Nodes);
-        var serializedProfile = profile.ToJsonString(new JsonSerializerOptions
-        {
-            WriteIndented = true,
-        });
+        var serializedProfile = profile.ToJsonString(JsonStore.IndentedOptions);
 
         _paths.EnsureDirectories();
         var profilePath = Path.Combine(

@@ -170,8 +170,7 @@ internal sealed class SingBoxTunConfigBuilder
         };
 
         inbounds.Add(tunInbound);
-        return SingBoxTunBuildResult.Success(
-            root.ToJsonString(new JsonSerializerOptions { WriteIndented = true }));
+        return SingBoxTunBuildResult.Success(root.ToJsonString(JsonStore.IndentedOptions));
     }
 
     private static bool TryGetOrCreateInboundArray(

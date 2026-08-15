@@ -1,13 +1,23 @@
 using System.Text.Json;
+using System.Text.Json.Serialization.Metadata;
 
 namespace WFly.Services;
 
 internal static class JsonStore
 {
+    private static readonly IJsonTypeInfoResolver TypeInfoResolver = new DefaultJsonTypeInfoResolver();
+
     public static readonly JsonSerializerOptions Options = new()
     {
         WriteIndented = true,
         PropertyNameCaseInsensitive = true,
+        TypeInfoResolver = TypeInfoResolver,
+    };
+
+    public static readonly JsonSerializerOptions IndentedOptions = new()
+    {
+        WriteIndented = true,
+        TypeInfoResolver = TypeInfoResolver,
     };
 
     public static async Task<T> ReadOrDefaultAsync<T>(string path, Func<T> defaultFactory, CancellationToken cancellationToken)

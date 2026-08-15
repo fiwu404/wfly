@@ -105,7 +105,7 @@ internal sealed class ProfileGenerationService
 
         _paths.EnsureDirectories();
         var outputPath = Path.Combine(_paths.ProfilesDirectory, $"runtime-{ToSafeSegment(selectedNode.Id)}.json");
-        var content = profile.ToJsonString(new JsonSerializerOptions { WriteIndented = true });
+        var content = profile.ToJsonString(JsonStore.IndentedOptions);
         await WriteAtomicallyAsync(outputPath, content, cancellationToken);
         return new GeneratedProfile(outputPath, "sing-box", nodeTag, enableTun);
     }

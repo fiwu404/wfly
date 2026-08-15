@@ -355,7 +355,7 @@ internal sealed class AppPaths
             {
                 File.WriteAllText(
                     temporaryPath,
-                    root.ToJsonString(new JsonSerializerOptions { WriteIndented = true }),
+                    root.ToJsonString(JsonStore.IndentedOptions),
                     new UTF8Encoding(encoderShouldEmitUTF8Identifier: false));
                 File.Move(temporaryPath, filePath, overwrite: true);
             }
