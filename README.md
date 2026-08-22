@@ -1,29 +1,32 @@
 # WFly
 
-Windows x64 轻量代理桌面客户端，当前版本：`v0.1.0`。
+Windows x64 轻量代理桌面客户端，当前版本：`V0.1.0`。
 
-WFly 以节点组为中心管理订阅和手动节点，提供 sing-box、Xray-core 与 Mihomo 的官方内核下载/更新，并把全部运行数据放在项目同级的 `data/` 目录。订阅支持常规 Base64/逐行链接，以及受限转换的 Clash/Mihomo YAML `proxies` 中 VLESS 节点（含常见的单行对象写法）。
+WFly 以节点组为中心管理订阅和手动节点，提供 sing-box、Xray-core 与 Mihomo 的官方内核下载/更新，并把全部运行数据放在程序目录下的 `./data/`。复制整个程序目录即可携带配置、节点、内核和图片等文件。订阅支持常规 Base64/逐行链接，以及受限转换的 Clash/Mihomo YAML `proxies` 中 VLESS 节点（含常见的单行对象写法）。
 
 ## 功能
 
 - 可拖动比例的右侧导航：首页、节点、节点组、连接、规则、日志、测试、设置。
 - 节点组是节点的唯一父级；不会创建“全部”分类。空订阅可创建手动节点组。
-- 节点编辑器提供 VMess、VLESS、Shadowsocks、Trojan、Hysteria2、TUIC、WireGuard、SOCKS、HTTP、AnyTLS、Naive、策略组、代理链和自定义出站等类型。
+- 节点编辑器参照 v2rayN 的协议化结构，提供 VMess、VLESS、Shadowsocks、Trojan、Hysteria2、TUIC、WireGuard、SOCKS、HTTP、AnyTLS、Naive 和 sing-box 自定义出站；服务器、端口、认证、协议参数、传输、TLS/Reality 均有对应输入项。
 - HTTPS 订阅组支持 SS、VMess、VLESS、Trojan 分享链接；首次填写订阅默认每 6 小时更新，留空则默认不更新。更新在单次原子写入中替换该组节点。
-- 手动节点粘贴 SS、VMess、VLESS、Trojan 链接时会生成 sing-box 出站；AnyTLS、Naive、策略组、代理链和自定义出站等高级类型需要填写完整的、与当前 sing-box 版本兼容的出站 JSON。策略组/代理链不会自动由多个独立节点拼装。
+- 手动节点可直接填写完整协议表单；SS、VMess、VLESS、Trojan 分享链接也可一键解析并回填字段。表单保存时生成 sing-box 出站，自定义类型则使用用户填写的原始出站 JSON。
+- 节点列表支持 Ctrl/Shift 多选和右键批量测速：Ping、TCPing 直接检测节点服务器，真连接与 UDP 检测通过临时 sing-box + 独立本地 SOCKS 链路完成，结果写回对应节点。
 - 规则提供图形化编辑与 JSON 配置文件双视图；图形规则支持域名、IP/CIDR、端口、进程、网络、协议和入站匹配，复杂 sing-box 规则可填写原生 JSON。规则副本保存在 `data/rules/`。
 - 首页提供节点状态、自动启停的图形化三档模式开关、用户触发的出口 IP / Google 延迟检测，以及 250ms 刷新的四条可悬停读取流量曲线。
+- 窗口最小化或关闭时可驻留系统托盘；双击托盘图标恢复窗口，右键圆角小窗可选择节点、切换代理规则并安全退出，点击小窗外或桌面会自动收起。
 - 日志只保存在内存；点击导出后才写入 `data/exports/`。
-- 测试页可检测百度、Google、Netflix、YouTube、Disney+、GitHub、Pornhub 等站点的实际 HTTP 访问延迟。
-- 设置页可安全下载和更新 sing-box、Xray-core、Mihomo。Mihomo/Xray-core 可运行用户导入到 `data/profiles/` 的原生配置。
+- 测试页可检测百度、Google、Netflix、YouTube、Disney+、GitHub、Pornhub 等站点的实际 HTTP 访问延迟；单击延迟可重测单个站点，并显示 HTTP 层的可访问/受限状态。仅在运行中的 sing-box 本地代理可确认时才允许“通过本地代理”测试，否则明确显示直连选项。
+- 设置页可安全下载和更新 sing-box、Xray-core、Mihomo，可单独下载选中内核或按顺序下载全部内核；卡片内显示每个内核状态和总下载进度，空闲时按已安装内核数显示（例如 `3/3`）。Mihomo/Xray-core 可运行用户导入到 `data/profiles/` 的原生配置。
 - sing-box 支持由选中节点和图形规则生成的本地配置；TUN 模式需要以管理员身份运行。
 
 ## 快速使用
 
-1. 从发布目录运行 `WFly.exe`。首次运行会在发布目录同级创建 `data/`，不会在 `C:\Users` 下新建 WFly 数据。
+1. 从程序目录运行 `WFly.exe`。首次运行会在 `WFly.exe` 所在目录创建 `./data/`，不会在 `C:\Users` 下新建 WFly 数据。
 2. 在“节点组”创建一个组：订阅链接留空即可建立手动组；填写 HTTPS 链接会建立订阅组并立即尝试导入。
 3. 在“节点”选择该组并添加节点，或等待订阅更新导入节点。
-4. 在“设置”选择所需内核，点击“检查并下载选中内核”，核对版本和 SHA-256 后确认。
+4. 在“设置”选择所需内核，点击内核版本列中的“下载”，或使用“下载所有内核”。
+5. 在“设置”启用并更新 GeoFiles；规则模式下会把匹配中国大陆域名及 IP 的流量直连，其他流量仍按你的规则与默认节点处理。
 5. 在首页把三档开关拨到“系统代理”或 “TUN 模式”即可启动所选节点；回到中间“关闭代理”会停止内核。系统代理只会在使用 WFly 生成的 sing-box 配置时指向本机 `127.0.0.1`；关闭/退出时仅在设置仍由 WFly 持有时恢复原有值。
 
 ## 数据与隐私
@@ -31,7 +34,7 @@ WFly 以节点组为中心管理订阅和手动节点，提供 sing-box、Xray-c
 发布版的数据根目录为：
 
 ```text
-<工作目录>/data/
+<程序目录>/data/
 ├── cores/       已验证的内核
 ├── profiles/    生成或导入的核心配置
 ├── rules/       可读规则 JSON 副本
@@ -53,7 +56,7 @@ WFly 以节点组为中心管理订阅和手动节点，提供 sing-box、Xray-c
 - 为避免把 Windows 代理指向未知端口，自动“系统代理”仅适用于 WFly 生成的 sing-box 配置；运行导入的 Mihomo/Xray 原生配置时请选择“关闭代理”，或在该原生配置中自行管理代理模式。
 - WFly 只运行已校验、已登记的内核文件，并使用参数列表启动，不拼接 shell 命令。
 
-节点类型和规则字段的交互设计参考了本地 v2rayN 工程，但 WFly 不打包其代码或内核。
+节点类型和字段结构参考 [v2rayN](https://github.com/2dust/v2rayN) 的公开节点模型与编辑窗口，但 WFly 不打包其代码或内核。
 
 ## 安全设计
 
@@ -76,7 +79,7 @@ dotnet restore .\WFly.csproj -r win-x64
 dotnet publish .\WFly.csproj -c Release --no-restore -o ..\release
 ```
 
-发布产物是依赖 .NET 8 Desktop Runtime x64 的单文件程序：`../release/WFly.exe`。运行数据位于发布目录同级的 `../data/`，不会被提交到源代码仓库。
+发布产物是依赖 .NET 8 Desktop Runtime x64 的单文件程序：项目根目录的 `./release/WFly.exe`。运行数据位于程序目录的 `./data/`（发布版即 `./release/data/`），不会被提交到源代码仓库。
 
 ## 上游项目
 

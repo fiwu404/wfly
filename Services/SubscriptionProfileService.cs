@@ -123,6 +123,11 @@ internal sealed class SubscriptionProfileService
                 CoreId = "sing-box",
                 ShareLink = parsedNode.ShareLink,
                 ConfigurationJson = parsedNode.Outbound.ToJsonString(),
+                PingResult = existing?.PingResult,
+                TcpingResult = existing?.TcpingResult,
+                RealConnectionResult = existing?.RealConnectionResult,
+                UdpResult = existing?.UdpResult,
+                LastTestedAt = existing?.LastTestedAt,
                 IsEnabled = existing?.IsEnabled ?? true,
                 CreatedAt = existing?.CreatedAt ?? default,
             });

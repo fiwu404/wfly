@@ -12,10 +12,15 @@ namespace WFly.UI.Controls;
 internal sealed class ProxyModeSelector : Control
 {
     private const int PositionCount = 3;
+    private const int FrameIntervalMilliseconds = 16;
+    private const int RailHeight = 3;
+    private const int MarkerWidth = 10;
+    private const int MarkerHeight = 22;
     private static readonly string[] DefaultLabels = ["系统代理", "关闭代理", "TUN 模式"];
 
     private readonly System.Windows.Forms.Timer _animationTimer;
     private string[] _labels = (string[])DefaultLabels.Clone();
+    private Size[] _labelSizes = new Size[PositionCount];
     private int _selectedIndex = (int)ProxyMode.Off;
     private int? _pendingSelectedIndex;
     private bool _dragging;
@@ -24,6 +29,19 @@ internal sealed class ProxyModeSelector : Control
     private float _animationFrom;
     private float _animationTo = (float)ProxyMode.Off;
     private long _animationStartedAt;
+    private int _lastInvalidatedThumbX = int.MinValue;
+    private int _lastInvalidatedHighlight = -1;
+    private bool _isInitialized;
+
+    private readonly record struct MarkerPositions(int Left, int Center, int Right)
+    {
+        public int GetX(int index) => index switch
+        {
+            0 => Left,
+            1 => Center,
+            _ => Right,
+        };
+    }
 
     public ProxyModeSelector()
     {
@@ -31,6 +49,7 @@ internal sealed class ProxyModeSelector : Control
             ControlStyles.AllPaintingInWmPaint |
             ControlStyles.OptimizedDoubleBuffer |
             ControlStyles.ResizeRedraw |
+            ControlStyles.Opaque |
             ControlStyles.Selectable |
             ControlStyles.UserPaint,
             true);
@@ -39,12 +58,15 @@ internal sealed class ProxyModeSelector : Control
         AccessibleName = "代理模式";
         AccessibleDescription = GetLabel(_selectedIndex);
         Size = new Size(260, 54);
-        MinimumSize = new Size(168, 48);
+        MinimumSize = new Size(0, 48);
+        Margin = Padding.Empty;
         TabStop = true;
         Cursor = Cursors.Hand;
 
-        _animationTimer = new System.Windows.Forms.Timer { Interval = 15 };
+        _animationTimer = new System.Windows.Forms.Timer { Interval = FrameIntervalMilliseconds };
         _animationTimer.Tick += (_, _) => AdvanceAnimation();
+        _isInitialized = true;
+        RefreshLabelMetrics();
     }
 
     /// <summary>
@@ -69,10 +91,15 @@ internal sealed class ProxyModeSelector : Control
             }
 
             _labels = (string[])value.Clone();
+            RefreshLabelMetrics();
             AccessibleDescription = GetLabel(_selectedIndex);
-            Invalidate();
+            InvalidateVisual(force: true);
         }
     }
+
+    /// <summary>True only while a mouse drag is active.</summary>
+    [Browsable(false)]
+    internal bool IsDragging => _dragging;
 
     /// <summary>
     /// Gets or sets the committed zero-based position. Setting this property
@@ -114,56 +141,59 @@ internal sealed class ProxyModeSelector : Control
         graphics.SmoothingMode = SmoothingMode.AntiAlias;
         graphics.Clear(BackColor);
 
-        var points = GetMarkerPoints();
-        var railLeft = points[0].X;
-        var railRight = points[^1].X;
-        const int railHeight = 6;
-        const int markerWidth = 10;
-        const int markerHeight = 22;
+        var markers = GetMarkerPositions();
+        var railLeft = markers.Left;
+        var railRight = markers.Right;
         var railTop = Math.Max(8, (Height - 34) / 2);
         var highlightedIndex = GetNearestIndex(_renderedPosition);
-        var animatedMarkerX = PositionToPixel(_renderedPosition, points);
+        var animatedMarkerX = PositionToPixel(_renderedPosition, markers);
 
         var isEnabled = Enabled;
         using var idleBrush = new SolidBrush(isEnabled ? Color.FromArgb(207, 216, 232) : Color.FromArgb(223, 228, 237));
         using var selectedBrush = new SolidBrush(isEnabled ? UiPalette.Accent : Color.FromArgb(157, 171, 194));
-        using var selectedOutline = new Pen(isEnabled ? Color.FromArgb(45, 88, 184) : Color.FromArgb(135, 148, 169), 2F);
         using var textBrush = new SolidBrush(ForeColor);
         using var mutedTextBrush = new SolidBrush(isEnabled ? UiPalette.MutedInk : Color.FromArgb(151, 161, 178));
 
-        graphics.FillRoundedRectangle(idleBrush, railLeft, railTop, railRight - railLeft, railHeight, 5);
-        graphics.FillRoundedRectangle(selectedBrush, railLeft, railTop, Math.Max(0, animatedMarkerX - railLeft), railHeight, 5);
+        FillCapsule(graphics, idleBrush, new Rectangle(railLeft, railTop, railRight - railLeft, RailHeight));
+        FillCapsule(graphics, selectedBrush, new Rectangle(railLeft, railTop, Math.Max(0, animatedMarkerX - railLeft), RailHeight));
 
-        for (var index = 0; index < points.Length; index++)
+        for (var index = 0; index < PositionCount; index++)
         {
-            var marker = new Rectangle(
-                points[index].X - markerWidth / 2,
-                railTop - (markerHeight - railHeight) / 2,
-                markerWidth,
-                markerHeight);
+            var markerX = markers.GetX(index);
+            // The active thumb is painted once below.  Only omit the fixed
+            // tick when it is physically on that tick; using the nearest
+            // index here made ticks disappear halfway through a drag.
+            if (Math.Abs(animatedMarkerX - markerX) > 1)
+            {
+                var marker = new Rectangle(
+                    markerX - MarkerWidth / 2,
+                    railTop - (MarkerHeight - RailHeight) / 2,
+                    MarkerWidth,
+                    MarkerHeight);
 
-            graphics.FillRoundedRectangle(idleBrush, marker.X, marker.Y, marker.Width, marker.Height, 3);
+                FillCapsule(graphics, idleBrush, marker);
+            }
 
             var label = _labels[index];
-            var labelSize = TextRenderer.MeasureText(label, Font);
-            var labelX = Math.Clamp(points[index].X - labelSize.Width / 2, 0, Math.Max(0, Width - labelSize.Width));
-            var labelY = railTop + markerHeight / 2 + 8;
+            var labelSize = _labelSizes[index];
+            var labelX = Math.Clamp(markerX - labelSize.Width / 2, 0, Math.Max(0, Width - labelSize.Width));
+            var labelY = railTop + MarkerHeight / 2 + 8;
+            var labelBounds = new Rectangle(labelX, labelY, Math.Max(0, Width - labelX), Math.Max(labelSize.Height, Font.Height + 2));
             TextRenderer.DrawText(
                 graphics,
                 label,
                 Font,
-                new Point(labelX, labelY),
+                labelBounds,
                 index == highlightedIndex ? textBrush.Color : mutedTextBrush.Color,
-                TextFormatFlags.NoPadding | TextFormatFlags.SingleLine);
+                TextFormatFlags.NoPadding | TextFormatFlags.SingleLine | TextFormatFlags.EndEllipsis | TextFormatFlags.VerticalCenter);
         }
 
         var activeMarker = new Rectangle(
-            animatedMarkerX - markerWidth / 2,
-            railTop - (markerHeight - railHeight) / 2,
-            markerWidth,
-            markerHeight);
-        graphics.FillRoundedRectangle(selectedBrush, activeMarker.X, activeMarker.Y, activeMarker.Width, activeMarker.Height, 3);
-        graphics.DrawRoundedRectangle(selectedOutline, activeMarker, 3);
+            animatedMarkerX - MarkerWidth / 2,
+            railTop - (MarkerHeight - RailHeight) / 2,
+            MarkerWidth,
+            MarkerHeight);
+        FillCapsule(graphics, selectedBrush, activeMarker);
     }
 
     protected override void OnMouseDown(MouseEventArgs e)
@@ -178,7 +208,7 @@ internal sealed class ProxyModeSelector : Control
         CancelAnimation(discardPendingSelection: true);
         _dragging = true;
         Capture = true;
-        SetRenderedPosition(PixelToPosition(e.X));
+        SetRenderedPosition(PixelToPosition(e.X), force: true);
     }
 
     protected override void OnMouseMove(MouseEventArgs e)
@@ -186,6 +216,9 @@ internal sealed class ProxyModeSelector : Control
         base.OnMouseMove(e);
         if (_dragging)
         {
+            // Update on the input message itself.  The visual path is small
+            // and cached, so this keeps the thumb under the pointer instead
+            // of introducing a timer-frame delay.
             SetRenderedPosition(PixelToPosition(e.X));
         }
     }
@@ -201,6 +234,7 @@ internal sealed class ProxyModeSelector : Control
         SetRenderedPosition(PixelToPosition(e.X));
         _dragging = false;
         Capture = false;
+        InvalidateVisual(force: true);
 
         var targetIndex = GetNearestIndex(_renderedPosition);
         if (targetIndex == _selectedIndex)
@@ -290,10 +324,75 @@ internal sealed class ProxyModeSelector : Control
         }
     }
 
-    private void SetRenderedPosition(float position)
+    protected override void OnFontChanged(EventArgs e)
     {
-        _renderedPosition = Math.Clamp(position, 0F, PositionCount - 1);
+        base.OnFontChanged(e);
+        if (!_isInitialized)
+        {
+            return;
+        }
+
+        RefreshLabelMetrics();
+        InvalidateVisual(force: true);
+    }
+
+    protected override void OnSizeChanged(EventArgs e)
+    {
+        base.OnSizeChanged(e);
+        if (!_isInitialized)
+        {
+            return;
+        }
+
+        InvalidateVisual(force: true);
+    }
+
+    private void SetRenderedPosition(float position, bool force = false)
+    {
+        var normalized = Math.Clamp(position, 0F, PositionCount - 1);
+        if (!force && Math.Abs(_renderedPosition - normalized) < 0.001F)
+        {
+            return;
+        }
+
+        _renderedPosition = normalized;
+        InvalidateVisual(force, paintImmediately: _dragging);
+    }
+
+    private void InvalidateVisual(bool force = false, bool paintImmediately = false)
+    {
+        var markers = GetMarkerPositions();
+        var thumbX = PositionToPixel(_renderedPosition, markers);
+        var highlight = GetNearestIndex(_renderedPosition);
+        if (!force && thumbX == _lastInvalidatedThumbX && highlight == _lastInvalidatedHighlight)
+        {
+            return;
+        }
+
+        _lastInvalidatedThumbX = thumbX;
+        _lastInvalidatedHighlight = highlight;
         Invalidate();
+
+        // Paint the thumb in the same input message while dragging.  A plain
+        // Invalidate waits behind queued mouse messages on busy WinForms UIs,
+        // which makes an otherwise light control visibly trail the cursor.
+        if (paintImmediately && IsHandleCreated)
+        {
+            Update();
+        }
+    }
+
+    private void RefreshLabelMetrics()
+    {
+        if (_labels is null || _labels.Length != PositionCount)
+        {
+            _labelSizes = new Size[PositionCount];
+            return;
+        }
+
+        _labelSizes = _labels
+            .Select(label => TextRenderer.MeasureText(label, Font, Size.Empty, TextFormatFlags.NoPadding | TextFormatFlags.SingleLine))
+            .ToArray();
     }
 
     private void BeginAnimation(float targetPosition, bool notifyAfterAnimation)
@@ -312,7 +411,7 @@ internal sealed class ProxyModeSelector : Control
         }
 
         _animationTimer.Start();
-        Invalidate();
+        InvalidateVisual(force: true);
     }
 
     private void CancelAnimation(bool discardPendingSelection)
@@ -343,7 +442,7 @@ internal sealed class ProxyModeSelector : Control
             return;
         }
 
-        Invalidate();
+        InvalidateVisual();
     }
 
     private void CompleteAnimation()
@@ -366,7 +465,7 @@ internal sealed class ProxyModeSelector : Control
             _pendingSelectedIndex = null;
         }
 
-        Invalidate();
+        InvalidateVisual(force: true);
     }
 
     private void RaiseSelectionChanged()
@@ -375,33 +474,66 @@ internal sealed class ProxyModeSelector : Control
         ModeChanged?.Invoke(this, EventArgs.Empty);
     }
 
-    private Point[] GetMarkerPoints()
+    private static void FillCapsule(Graphics graphics, Brush brush, Rectangle rectangle)
+    {
+        if (rectangle.Width <= 0 || rectangle.Height <= 0)
+        {
+            return;
+        }
+
+        if (rectangle.Width >= rectangle.Height)
+        {
+            var diameter = rectangle.Height;
+            if (rectangle.Width <= diameter)
+            {
+                graphics.FillEllipse(brush, rectangle);
+                return;
+            }
+
+            var radius = diameter / 2;
+            graphics.FillRectangle(brush, rectangle.X + radius, rectangle.Y, rectangle.Width - diameter, rectangle.Height);
+            graphics.FillEllipse(brush, rectangle.X, rectangle.Y, diameter, diameter);
+            graphics.FillEllipse(brush, rectangle.Right - diameter, rectangle.Y, diameter, diameter);
+            return;
+        }
+
+        var verticalDiameter = rectangle.Width;
+        if (rectangle.Height <= verticalDiameter)
+        {
+            graphics.FillEllipse(brush, rectangle);
+            return;
+        }
+
+        var verticalRadius = verticalDiameter / 2;
+        graphics.FillRectangle(brush, rectangle.X, rectangle.Y + verticalRadius, rectangle.Width, rectangle.Height - verticalDiameter);
+        graphics.FillEllipse(brush, rectangle.X, rectangle.Y, verticalDiameter, verticalDiameter);
+        graphics.FillEllipse(brush, rectangle.X, rectangle.Bottom - verticalDiameter, verticalDiameter, verticalDiameter);
+    }
+
+    private MarkerPositions GetMarkerPositions()
     {
         var horizontalPadding = Math.Max(24, Width / 10);
         var usableWidth = Math.Max(1, Width - horizontalPadding * 2);
-        var centerY = Math.Max(20, Height / 2 - 7);
-        return
-        [
-            new Point(horizontalPadding, centerY),
-            new Point(horizontalPadding + usableWidth / 2, centerY),
-            new Point(Width - horizontalPadding, centerY),
-        ];
+        return new MarkerPositions(
+            horizontalPadding,
+            horizontalPadding + usableWidth / 2,
+            Width - horizontalPadding);
     }
 
     private float PixelToPosition(int horizontalPosition)
     {
-        var points = GetMarkerPoints();
-        var railWidth = Math.Max(1, points[^1].X - points[0].X);
+        var markers = GetMarkerPositions();
+        var railWidth = Math.Max(1, markers.Right - markers.Left);
         return Math.Clamp(
-            (horizontalPosition - points[0].X) * (PositionCount - 1F) / railWidth,
+            (horizontalPosition - markers.Left) * (PositionCount - 1F) / railWidth,
             0F,
             PositionCount - 1F);
     }
 
-    private static int PositionToPixel(float position, Point[] points)
+    private static int PositionToPixel(float position, MarkerPositions markers)
     {
         var normalized = Math.Clamp(position / (PositionCount - 1F), 0F, 1F);
-        return (int)Math.Round(points[0].X + (points[^1].X - points[0].X) * normalized);
+        return (int)Math.Round(markers.Left + (markers.Right - markers.Left) * normalized);
     }
 
     private static int GetNearestIndex(float position)

@@ -35,6 +35,13 @@ internal sealed class AppSettings
     /// </summary>
     public ProxyRoutingMode RoutingMode { get; set; } = ProxyRoutingMode.Rules;
 
+    /// <summary>
+    /// Enables the local GeoIP/GeoSite .srs rule-sets after the user has
+    /// downloaded them. Missing data never prevents the proxy from starting;
+    /// the generated profile simply falls back to user-defined rules.
+    /// </summary>
+    public bool GeoFilesSmartRoutingEnabled { get; set; } = true;
+
     /// <summary>Local mixed HTTP/SOCKS listener port for generated profiles.</summary>
     public int MixedProxyPort { get; set; } = 2080;
 

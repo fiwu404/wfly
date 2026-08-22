@@ -1,4 +1,5 @@
 using WFly.Models;
+using WFly.UI.Controls;
 
 namespace WFly.UI.Dialogs;
 
@@ -70,6 +71,8 @@ internal sealed class RuleEntryDialog : Form
         StartPosition = FormStartPosition.CenterParent;
         ClientSize = new Size(680, 590);
         MinimumSize = new Size(580, 500);
+        HandleCreated += (_, _) => WindowBackdrop.Apply(this);
+        UiControlTheme.ApplyNumericUpDown(_priorityNumeric);
 
         _matchKindComboBox.Items.AddRange(MatchKinds);
         _actionComboBox.Items.AddRange(Actions);
@@ -97,9 +100,9 @@ internal sealed class RuleEntryDialog : Form
         DialogControls.AddLabeledControl(layout, 6, "状态", _enabledCheckBox);
         DialogControls.AddLabeledControl(layout, 7, "配置 JSON", _configurationJsonTextBox);
 
-        var okButton = new Button { Text = "保存" };
+        var okButton = DialogControls.CreatePrimaryButton("保存");
         okButton.Click += OnSaveClick;
-        var cancelButton = new Button { Text = "取消" };
+        var cancelButton = DialogControls.CreateSecondaryButton("取消");
         var buttons = DialogControls.CreateButtonPanel(okButton, cancelButton);
 
         var root = new TableLayoutPanel

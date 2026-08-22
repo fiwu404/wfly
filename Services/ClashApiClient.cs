@@ -24,14 +24,16 @@ internal sealed class ClashApiClient
         using var timeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
         timeout.CancelAfter(TimeSpan.FromSeconds(3));
         using var client = CreateLoopbackClient();
-        using var response = await client.GetAsync($"http://127.0.0.1:{port}/connections", HttpCompletionOption.ResponseHeadersRead, timeout.Token);
+        using var response = await client
+            .GetAsync($"http://127.0.0.1:{port}/connections", HttpCompletionOption.ResponseHeadersRead, timeout.Token)
+            .ConfigureAwait(false);
         if (!response.IsSuccessStatusCode)
         {
             return null;
         }
 
-        await using var stream = await response.Content.ReadAsStreamAsync(timeout.Token);
-        using var document = await ParseLimitedAsync(stream, timeout.Token);
+        await using var stream = await response.Content.ReadAsStreamAsync(timeout.Token).ConfigureAwait(false);
+        using var document = await ParseLimitedAsync(stream, timeout.Token).ConfigureAwait(false);
         var root = document.RootElement;
         var uploadTotal = ReadInt64(root, "uploadTotal");
         var downloadTotal = ReadInt64(root, "downloadTotal");
@@ -82,7 +84,7 @@ internal sealed class ClashApiClient
         var buffer = new byte[32 * 1024];
         while (true)
         {
-            var read = await stream.ReadAsync(buffer.AsMemory(), cancellationToken);
+            var read = await stream.ReadAsync(buffer.AsMemory(), cancellationToken).ConfigureAwait(false);
             if (read == 0)
             {
                 break;
@@ -93,11 +95,11 @@ internal sealed class ClashApiClient
                 throw new InvalidDataException("Clash API 响应过大。");
             }
 
-            await bounded.WriteAsync(buffer.AsMemory(0, read), cancellationToken);
+            await bounded.WriteAsync(buffer.AsMemory(0, read), cancellationToken).ConfigureAwait(false);
         }
 
         bounded.Position = 0;
-        return await JsonDocument.ParseAsync(bounded, cancellationToken: cancellationToken);
+        return await JsonDocument.ParseAsync(bounded, cancellationToken: cancellationToken).ConfigureAwait(false);
     }
 
     private static HttpClient CreateLoopbackClient()

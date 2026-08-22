@@ -21,6 +21,7 @@ internal sealed class TrafficChartControl : Control
     private readonly List<TrafficChartSample> _samples = [];
     private readonly ToolTip _toolTip = new();
     private int _hoveredSample = -1;
+    private bool _suspendHeavyRendering;
 
     public TrafficChartControl()
     {
@@ -30,12 +31,40 @@ internal sealed class TrafficChartControl : Control
             ControlStyles.ResizeRedraw |
             ControlStyles.UserPaint,
             true);
-        BackColor = Color.White;
+        BackColor = UiPalette.Card;
+        ForeColor = UiPalette.Ink;
         MinimumSize = new Size(280, 130);
     }
 
     [Browsable(false)]
     public IReadOnlyList<TrafficChartSample> Samples => _samples;
+
+    /// <summary>
+    /// Keeps interactive window resizing lightweight. Samples continue to be
+    /// recorded, but expensive curve construction is deferred until the user
+    /// releases the window border.
+    /// </summary>
+    [Browsable(false)]
+    public bool SuspendHeavyRendering
+    {
+        get => _suspendHeavyRendering;
+        set
+        {
+            if (_suspendHeavyRendering == value)
+            {
+                return;
+            }
+
+            _suspendHeavyRendering = value;
+            if (value)
+            {
+                _hoveredSample = -1;
+                _toolTip.Hide(this);
+            }
+
+            Invalidate();
+        }
+    }
 
     public void Append(TrafficChartSample sample)
     {
@@ -45,7 +74,10 @@ internal sealed class TrafficChartControl : Control
             _samples.RemoveRange(0, _samples.Count - MaximumSamples);
         }
 
-        Invalidate();
+        if (!_suspendHeavyRendering)
+        {
+            Invalidate();
+        }
     }
 
     public void Clear()
@@ -53,6 +85,13 @@ internal sealed class TrafficChartControl : Control
         _samples.Clear();
         _hoveredSample = -1;
         _toolTip.Hide(this);
+        Invalidate();
+    }
+
+    public void ApplyTheme()
+    {
+        BackColor = UiPalette.Card;
+        ForeColor = UiPalette.Ink;
         Invalidate();
     }
 
@@ -75,6 +114,12 @@ internal sealed class TrafficChartControl : Control
 
         var bounds = GetPlotBounds();
         DrawGrid(graphics, bounds);
+        if (_suspendHeavyRendering)
+        {
+            DrawLegend(graphics, bounds.Bottom + 12);
+            return;
+        }
+
         if (_samples.Count == 0)
         {
             TextRenderer.DrawText(
@@ -82,7 +127,7 @@ internal sealed class TrafficChartControl : Control
                 "等待流量数据（不会伪造曲线）",
                 Font,
                 bounds,
-                Color.FromArgb(118, 128, 145),
+                UiPalette.MutedInk,
                 TextFormatFlags.HorizontalCenter | TextFormatFlags.VerticalCenter);
             DrawLegend(graphics, bounds.Bottom + 12);
             return;
@@ -108,7 +153,7 @@ internal sealed class TrafficChartControl : Control
         if (_hoveredSample >= 0 && _hoveredSample < _samples.Count)
         {
             var x = GetX(bounds, _hoveredSample, _samples.Count);
-            using var marker = new Pen(Color.FromArgb(88, 94, 110), 1F) { DashStyle = DashStyle.Dot };
+            using var marker = new Pen(UiPalette.MutedInk, 1F) { DashStyle = DashStyle.Dot };
             graphics.DrawLine(marker, x, bounds.Top, x, bounds.Bottom);
         }
     }
@@ -116,7 +161,7 @@ internal sealed class TrafficChartControl : Control
     protected override void OnMouseMove(MouseEventArgs e)
     {
         base.OnMouseMove(e);
-        if (_samples.Count == 0)
+        if (_suspendHeavyRendering || _samples.Count == 0)
         {
             return;
         }
@@ -152,8 +197,8 @@ internal sealed class TrafficChartControl : Control
 
     private void DrawGrid(Graphics graphics, Rectangle bounds)
     {
-        using var gridPen = new Pen(Color.FromArgb(229, 234, 241));
-        using var borderPen = new Pen(Color.FromArgb(202, 211, 223));
+        using var gridPen = new Pen(UiPalette.IsDark ? Color.FromArgb(59, 69, 85) : Color.FromArgb(229, 234, 241));
+        using var borderPen = new Pen(UiPalette.CardBorder);
         for (var row = 0; row <= 4; row++)
         {
             var y = bounds.Top + bounds.Height * row / 4;
@@ -175,7 +220,7 @@ internal sealed class TrafficChartControl : Control
                 label,
                 Font,
                 new Point(Math.Max(0, bounds.Left - size.Width - 6), bounds.Top + bounds.Height * row / 4 - size.Height / 2),
-                Color.FromArgb(105, 115, 130),
+                UiPalette.MutedInk,
                 TextFormatFlags.NoPadding);
         }
     }

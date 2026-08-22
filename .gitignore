@@ -32,6 +32,13 @@ coverage/
 *.snupkg
 artifacts/
 
+# Published portable bundle. Keep only the downloadable executable and notes;
+# runtime data created beside a locally launched release remains private.
+/release/*
+!/release/WFly.exe
+!/release/README.md
+!/release/SHA256SUMS.txt
+
 # Local configuration and credentials
 .env
 .env.*

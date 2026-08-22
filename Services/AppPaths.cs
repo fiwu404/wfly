@@ -7,10 +7,9 @@ namespace WFly.Services;
 /// <summary>
 /// Centralizes every writable path used by WFly.
 ///
-/// The application is intentionally portable: when the published executable is
-/// placed in <c>release</c>, data is stored in its sibling <c>data</c> folder.
-/// Development builds locate the project file first so they use the same
-/// workspace-level data folder instead of a nested bin directory.
+/// The application is intentionally portable: all writable data is stored in
+/// a <c>data</c> folder next to the running executable. Copying the program
+/// directory therefore also copies its settings, nodes, cores and profiles.
 /// </summary>
 internal sealed class AppPaths
 {
@@ -22,6 +21,7 @@ internal sealed class AppPaths
         CoresDirectory = Path.Combine(RootDirectory, "cores");
         ProfilesDirectory = Path.Combine(RootDirectory, "profiles");
         RulesDirectory = Path.Combine(RootDirectory, "rules");
+        GeoFilesDirectory = Path.Combine(RootDirectory, "geofiles");
         ExportsDirectory = Path.Combine(RootDirectory, "exports");
         StateDirectory = Path.Combine(RootDirectory, "state");
         TempDirectory = Path.Combine(RootDirectory, "temp");
@@ -31,6 +31,7 @@ internal sealed class AppPaths
         NodeGroupsFile = Path.Combine(StateDirectory, "node-groups.json");
         ProxyNodesFile = Path.Combine(StateDirectory, "proxy-nodes.json");
         RuleSetsFile = Path.Combine(StateDirectory, "rule-sets.json");
+        GeoFilesStateFile = Path.Combine(StateDirectory, "geofiles.json");
         TrafficSnapshotsFile = Path.Combine(StateDirectory, "traffic-snapshots.json");
 
         LegacyRootDirectory = Path.Combine(
@@ -38,11 +39,12 @@ internal sealed class AppPaths
             ProductDirectoryName);
     }
 
-    /// <summary>Portable application data root (normally &lt;workspace&gt;/data).</summary>
+    /// <summary>Portable application data root next to the running executable.</summary>
     public string RootDirectory { get; }
     public string CoresDirectory { get; }
     public string ProfilesDirectory { get; }
     public string RulesDirectory { get; }
+    public string GeoFilesDirectory { get; }
     public string ExportsDirectory { get; }
     public string StateDirectory { get; }
     public string TempDirectory { get; }
@@ -51,6 +53,7 @@ internal sealed class AppPaths
     public string NodeGroupsFile { get; }
     public string ProxyNodesFile { get; }
     public string RuleSetsFile { get; }
+    public string GeoFilesStateFile { get; }
     public string TrafficSnapshotsFile { get; }
 
     /// <summary>
@@ -73,6 +76,7 @@ internal sealed class AppPaths
         Directory.CreateDirectory(CoresDirectory);
         Directory.CreateDirectory(ProfilesDirectory);
         Directory.CreateDirectory(RulesDirectory);
+        Directory.CreateDirectory(GeoFilesDirectory);
         Directory.CreateDirectory(ExportsDirectory);
         Directory.CreateDirectory(StateDirectory);
         Directory.CreateDirectory(TempDirectory);
@@ -83,33 +87,7 @@ internal sealed class AppPaths
     private static string ResolveDataDirectory()
     {
         var baseDirectory = Path.GetFullPath(AppContext.BaseDirectory);
-        var projectDirectory = FindProjectDirectory(baseDirectory);
-        if (projectDirectory is not null)
-        {
-            var workspaceDirectory = Directory.GetParent(projectDirectory)?.FullName;
-            if (!string.IsNullOrWhiteSpace(workspaceDirectory))
-            {
-                return Path.GetFullPath(Path.Combine(workspaceDirectory, "data"));
-            }
-        }
-
-        // A published WFly.exe lives in <workspace>/release, making this
-        // resolve to <workspace>/data. It also keeps a standalone copy portable.
-        return Path.GetFullPath(Path.Combine(baseDirectory, "..", "data"));
-    }
-
-    private static string? FindProjectDirectory(string baseDirectory)
-    {
-        var current = new DirectoryInfo(baseDirectory);
-        for (var depth = 0; current is not null && depth < 12; depth++, current = current.Parent)
-        {
-            if (File.Exists(Path.Combine(current.FullName, "WFly.csproj")))
-            {
-                return current.FullName;
-            }
-        }
-
-        return null;
+        return Path.Combine(baseDirectory, "data");
     }
 
     private void MigrateLegacyDataIfNeeded()

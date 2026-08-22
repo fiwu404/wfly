@@ -38,6 +38,29 @@ internal sealed class ProxyNodeStore
         }
     }
 
+    /// <summary>
+    /// Returns a detached, stable snapshot across every node group.  The tray
+    /// uses this cache so opening its menu never has to synchronously read the
+    /// state file once per group.
+    /// </summary>
+    public async Task<IReadOnlyList<ProxyNode>> GetAllAsync(CancellationToken cancellationToken = default)
+    {
+        await _gate.WaitAsync(cancellationToken);
+        try
+        {
+            var state = await LoadStateAsync(cancellationToken);
+            return state.Nodes
+                .OrderBy(node => node.CreatedAt)
+                .ThenBy(node => node.Name, StringComparer.OrdinalIgnoreCase)
+                .Select(Clone)
+                .ToArray();
+        }
+        finally
+        {
+            _gate.Release();
+        }
+    }
+
     public async Task<ProxyNode?> GetAsync(string nodeId, CancellationToken cancellationToken = default)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(nodeId);
@@ -239,6 +262,12 @@ internal sealed class ProxyNodeStore
             CoreId = StoreValidation.RequiredText(source.CoreId, nameof(source.CoreId), 128),
             ShareLink = StoreValidation.OptionalText(source.ShareLink, 32_768),
             ConfigurationJson = StoreValidation.OptionalText(source.ConfigurationJson, 1_048_576),
+            ManualOptionsJson = StoreValidation.OptionalText(source.ManualOptionsJson, 1_048_576),
+            PingResult = StoreValidation.OptionalText(source.PingResult, 64),
+            TcpingResult = StoreValidation.OptionalText(source.TcpingResult, 64),
+            RealConnectionResult = StoreValidation.OptionalText(source.RealConnectionResult, 64),
+            UdpResult = StoreValidation.OptionalText(source.UdpResult, 64),
+            LastTestedAt = source.LastTestedAt,
             IsEnabled = source.IsEnabled,
             CreatedAt = createdAt ?? (source.CreatedAt == default ? now : source.CreatedAt),
             UpdatedAt = now,
@@ -254,6 +283,12 @@ internal sealed class ProxyNodeStore
         CoreId = source.CoreId,
         ShareLink = source.ShareLink,
         ConfigurationJson = source.ConfigurationJson,
+        ManualOptionsJson = source.ManualOptionsJson,
+        PingResult = source.PingResult,
+        TcpingResult = source.TcpingResult,
+        RealConnectionResult = source.RealConnectionResult,
+        UdpResult = source.UdpResult,
+        LastTestedAt = source.LastTestedAt,
         IsEnabled = source.IsEnabled,
         CreatedAt = source.CreatedAt,
         UpdatedAt = source.UpdatedAt,

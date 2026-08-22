@@ -1,4 +1,5 @@
 using System.Text.Json;
+using WFly.UI.Controls;
 
 namespace WFly.UI.Dialogs;
 
@@ -8,6 +9,32 @@ namespace WFly.UI.Dialogs;
 /// </summary>
 internal static class DialogControls
 {
+    public static RoundedButton CreatePrimaryButton(string text) => new()
+    {
+        Text = text,
+        AutoSize = true,
+        BackColor = UiPalette.Accent,
+        ForeColor = Color.White,
+        HoverBackColor = Color.FromArgb(54, 98, 207),
+        PressedBackColor = Color.FromArgb(43, 83, 178),
+        CornerRadius = 9,
+        Padding = new Padding(13, 5, 13, 5),
+    };
+
+    public static RoundedButton CreateSecondaryButton(string text) => new()
+    {
+        Text = text,
+        AutoSize = true,
+        BackColor = UiPalette.Hover,
+        ForeColor = UiPalette.Ink,
+        HoverBackColor = UiPalette.AccentSoft,
+        PressedBackColor = Color.FromArgb(214, 227, 251),
+        BorderColor = UiPalette.CardBorder,
+        BorderThickness = 1,
+        CornerRadius = 9,
+        Padding = new Padding(13, 5, 13, 5),
+    };
+
     public static Label CreateLabel(string text)
     {
         return new Label
@@ -21,7 +48,7 @@ internal static class DialogControls
 
     public static TextBox CreateTextBox(bool multiline = false)
     {
-        return new TextBox
+        var textBox = new TextBox
         {
             Dock = DockStyle.Fill,
             Multiline = multiline,
@@ -30,16 +57,16 @@ internal static class DialogControls
             WordWrap = !multiline,
             Margin = new Padding(0, 4, 0, 4)
         };
+        UiControlTheme.ApplyTextBox(textBox);
+        return textBox;
     }
 
     public static ComboBox CreateComboBox()
     {
-        return new ComboBox
-        {
-            Dock = DockStyle.Fill,
-            DropDownStyle = ComboBoxStyle.DropDownList,
-            Margin = new Padding(0, 4, 0, 4)
-        };
+        var comboBox = UiControlTheme.CreateComboBox();
+        comboBox.Dock = DockStyle.Fill;
+        comboBox.Margin = new Padding(0, 4, 0, 4);
+        return comboBox;
     }
 
     public static FlowLayoutPanel CreateButtonPanel(Button okButton, Button cancelButton)

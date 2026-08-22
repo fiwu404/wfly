@@ -41,6 +41,7 @@ internal sealed partial class DashboardForm
         listPanel.RowStyles.Add(new RowStyle(SizeType.Percent, 100F));
         listPanel.RowStyles.Add(new RowStyle(SizeType.AutoSize));
         _ruleSetList = new ListBox { Dock = DockStyle.Fill, DisplayMember = nameof(RuleSet.Name), IntegralHeight = false, BackColor = UiPalette.Card, ForeColor = UiPalette.Ink };
+        UiControlTheme.ApplyListBox(_ruleSetList);
         _ruleSetList.SelectedIndexChanged += (_, _) => SelectRuleSetFromList();
         listPanel.Controls.Add(_ruleSetList, 0, 0);
         var ruleSetActions = new FlowLayoutPanel { AutoSize = true, Dock = DockStyle.Fill, Margin = new Padding(0, 8, 0, 0), BackColor = UiPalette.Canvas };
@@ -98,6 +99,7 @@ internal sealed partial class DashboardForm
             ForeColor = UiPalette.Ink,
             DetectUrls = false,
         };
+        UiControlTheme.ApplyRichTextBox(_ruleJsonBox);
         jsonRoot.Controls.Add(_ruleJsonBox, 0, 0);
         var jsonActions = new FlowLayoutPanel { AutoSize = true, Dock = DockStyle.Fill, Margin = new Padding(0, 8, 0, 0), BackColor = UiPalette.Canvas };
         var formatJson = CreateSecondaryButton("从图形规则刷新 JSON");
@@ -526,10 +528,38 @@ internal sealed partial class DashboardForm
             MinimizeBox = false,
             ShowInTaskbar = false,
         };
+        dialog.HandleCreated += (_, _) => WindowBackdrop.Apply(dialog);
         var label = new Label { Text = caption, AutoSize = true, Location = new Point(14, 14) };
         var textBox = new TextBox { Text = defaultValue, Location = new Point(14, 38), Width = 370 };
-        var confirm = new Button { Text = "确定", DialogResult = DialogResult.OK, AutoSize = true, Location = new Point(222, 88) };
-        var cancel = new Button { Text = "取消", DialogResult = DialogResult.Cancel, AutoSize = true, Location = new Point(308, 88) };
+        UiControlTheme.ApplyTextBox(textBox);
+        var confirm = new RoundedButton
+        {
+            Text = "确定",
+            DialogResult = DialogResult.OK,
+            AutoSize = true,
+            Location = new Point(222, 88),
+            BackColor = UiPalette.Accent,
+            ForeColor = Color.White,
+            HoverBackColor = Color.FromArgb(54, 98, 207),
+            PressedBackColor = Color.FromArgb(43, 83, 178),
+            CornerRadius = 9,
+            Padding = new Padding(13, 5, 13, 5),
+        };
+        var cancel = new RoundedButton
+        {
+            Text = "取消",
+            DialogResult = DialogResult.Cancel,
+            AutoSize = true,
+            Location = new Point(308, 88),
+            BackColor = UiPalette.Hover,
+            ForeColor = UiPalette.Ink,
+            HoverBackColor = UiPalette.AccentSoft,
+            PressedBackColor = Color.FromArgb(214, 227, 251),
+            BorderColor = UiPalette.CardBorder,
+            BorderThickness = 1,
+            CornerRadius = 9,
+            Padding = new Padding(13, 5, 13, 5),
+        };
         dialog.Controls.AddRange([label, textBox, confirm, cancel]);
         dialog.AcceptButton = confirm;
         dialog.CancelButton = cancel;

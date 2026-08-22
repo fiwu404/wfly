@@ -59,6 +59,37 @@ internal sealed class ProfileGenerationService
         var routeRules = routingMode == ProxyRoutingMode.Rules
             ? BuildRules(ruleSets, nodeTag)
             : new JsonArray();
+        var localGeoRuleSets = routingMode == ProxyRoutingMode.Rules && settings.GeoFilesSmartRoutingEnabled
+            ? BuildLocalSmartRoutingRuleSets()
+            : new JsonArray();
+        if (localGeoRuleSets.Count > 0)
+        {
+            // User-authored rules retain higher priority. GeoFiles provide the
+            // safe default after those explicit choices: mainland domains and
+            // addresses go direct; the route final still uses the selected
+            // proxy node.
+            foreach (var definition in GeoFileRegistry.SmartRouting)
+            {
+                routeRules.Add(new JsonObject
+                {
+                    ["rule_set"] = definition.Id,
+                    ["action"] = "route",
+                    ["outbound"] = "direct",
+                });
+            }
+        }
+        if (routingMode == ProxyRoutingMode.Rules)
+        {
+            // Keep the rule mode explicit even when the user's rule library is
+            // empty. This final conditionless rule is the visible catch-all
+            // route to the selected node; route.final remains a defensive
+            // fallback for cores that skip an unsupported preceding rule.
+            routeRules.Add(new JsonObject
+            {
+                ["action"] = "route",
+                ["outbound"] = nodeTag,
+            });
+        }
         var defaultOutboundTag = routingMode == ProxyRoutingMode.Direct ? "direct" : nodeTag;
         if (enableTun)
         {
@@ -82,6 +113,10 @@ internal sealed class ProfileGenerationService
             ["final"] = defaultOutboundTag,
             ["auto_detect_interface"] = true,
         };
+        if (localGeoRuleSets.Count > 0)
+        {
+            route["rule_set"] = localGeoRuleSets;
+        }
         var profile = new JsonObject
         {
             ["log"] = new JsonObject
@@ -163,6 +198,48 @@ internal sealed class ProfileGenerationService
             },
             ["final"] = "dns-remote",
         };
+    }
+
+    private JsonArray BuildLocalSmartRoutingRuleSets()
+    {
+        // A local rule-set is only emitted when the complete pair is present.
+        // This prevents a missing or partially updated GeoFile from breaking
+        // the generated sing-box configuration.
+        if (!GeoFileRegistry.SmartRouting.All(definition => IsUsableGeoFile(definition)))
+        {
+            return new JsonArray();
+        }
+
+        var ruleSets = new JsonArray();
+        foreach (var definition in GeoFileRegistry.SmartRouting)
+        {
+            ruleSets.Add(new JsonObject
+            {
+                ["tag"] = definition.Id,
+                ["type"] = "local",
+                ["format"] = "binary",
+                ["path"] = Path.Combine(_paths.GeoFilesDirectory, definition.FileName),
+            });
+        }
+
+        return ruleSets;
+    }
+
+    private bool IsUsableGeoFile(GeoFileDefinition definition)
+    {
+        try
+        {
+            var info = new FileInfo(Path.Combine(_paths.GeoFilesDirectory, definition.FileName));
+            return info.Exists && info.Length >= 64 && info.Length <= 32L * 1024 * 1024;
+        }
+        catch (IOException)
+        {
+            return false;
+        }
+        catch (UnauthorizedAccessException)
+        {
+            return false;
+        }
     }
 
     private static JsonObject ParseOutbound(string source)

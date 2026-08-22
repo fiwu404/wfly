@@ -1,4 +1,5 @@
 using WFly.Models;
+using WFly.UI.Controls;
 
 namespace WFly.UI.Dialogs;
 
@@ -69,6 +70,8 @@ internal sealed class NodeGroupDialog : Form
         StartPosition = FormStartPosition.CenterParent;
         ClientSize = new Size(530, 306);
         MinimumSize = Size;
+        HandleCreated += (_, _) => WindowBackdrop.Apply(this);
+        UiControlTheme.ApplyNumericUpDown(_updateIntervalNumeric);
 
         _subscriptionUrlTextBox.PlaceholderText = "留空即可创建手动节点组；订阅仅支持 HTTPS";
 
@@ -103,9 +106,9 @@ internal sealed class NodeGroupDialog : Form
         DialogControls.AddLabeledControl(layout, 3, "订阅更新", _autoUpdateCheckBox);
         DialogControls.AddLabeledControl(layout, 4, "更新间隔", updatePanel);
 
-        var okButton = new Button { Text = "保存" };
+        var okButton = DialogControls.CreatePrimaryButton("保存");
         okButton.Click += OnSaveClick;
-        var cancelButton = new Button { Text = "取消" };
+        var cancelButton = DialogControls.CreateSecondaryButton("取消");
         var buttons = DialogControls.CreateButtonPanel(okButton, cancelButton);
 
         var root = new TableLayoutPanel

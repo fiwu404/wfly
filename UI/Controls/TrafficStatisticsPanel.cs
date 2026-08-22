@@ -17,6 +17,8 @@ internal sealed class TrafficStatisticsPanel : Panel
     private readonly Label _metricHeader;
     private readonly Label _proxyHeader;
     private readonly Label _directHeader;
+    private readonly Label _title;
+    private readonly TableLayoutPanel _grid;
     private bool _compact;
 
     public TrafficStatisticsPanel()
@@ -44,7 +46,7 @@ internal sealed class TrafficStatisticsPanel : Panel
         root.RowStyles.Add(new RowStyle(SizeType.AutoSize));
         root.RowStyles.Add(new RowStyle(SizeType.Percent, 100F));
 
-        var title = new Label
+        _title = new Label
         {
             AutoSize = true,
             Dock = DockStyle.Fill,
@@ -54,7 +56,7 @@ internal sealed class TrafficStatisticsPanel : Panel
             Margin = new Padding(0, 0, 0, 8),
         };
 
-        var grid = new TableLayoutPanel
+        _grid = new TableLayoutPanel
         {
             Dock = DockStyle.Fill,
             ColumnCount = 3,
@@ -63,39 +65,39 @@ internal sealed class TrafficStatisticsPanel : Panel
             Padding = Padding.Empty,
             BackColor = UiPalette.CardBorder,
         };
-        grid.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 28F));
-        grid.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 36F));
-        grid.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 36F));
-        grid.RowStyles.Add(new RowStyle(SizeType.Absolute, 30F));
+        _grid.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 28F));
+        _grid.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 36F));
+        _grid.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 36F));
+        _grid.RowStyles.Add(new RowStyle(SizeType.Absolute, 30F));
         for (var row = 1; row <= 5; row++)
         {
-            grid.RowStyles.Add(new RowStyle(SizeType.Percent, 20F));
+            _grid.RowStyles.Add(new RowStyle(SizeType.Percent, 20F));
         }
 
         _metricHeader = CreateHeaderLabel("流量指标", UiPalette.MutedInk, ContentAlignment.MiddleLeft);
         _proxyHeader = CreateHeaderLabel("节点（代理）", ProxyColor, ContentAlignment.MiddleRight);
         _directHeader = CreateHeaderLabel("直连", DirectColor, ContentAlignment.MiddleRight);
-        grid.Controls.Add(_metricHeader, 0, 0);
-        grid.Controls.Add(_proxyHeader, 1, 0);
-        grid.Controls.Add(_directHeader, 2, 0);
+        _grid.Controls.Add(_metricHeader, 0, 0);
+        _grid.Controls.Add(_proxyHeader, 1, 0);
+        _grid.Controls.Add(_directHeader, 2, 0);
 
         string[] metricNames = ["上传速度", "下载速度", "活动连接", "累计上传", "累计下载"];
         for (var index = 0; index < metricNames.Length; index++)
         {
             var row = index + 1;
-            grid.Controls.Add(CreateMetricLabel(metricNames[index]), 0, row);
+            _grid.Controls.Add(CreateMetricLabel(metricNames[index]), 0, row);
 
             var proxy = CreateValueLabel(ProxyColor);
             _proxyValues[index] = proxy;
-            grid.Controls.Add(proxy, 1, row);
+            _grid.Controls.Add(proxy, 1, row);
 
             var direct = CreateValueLabel(DirectColor);
             _directValues[index] = direct;
-            grid.Controls.Add(direct, 2, row);
+            _grid.Controls.Add(direct, 2, row);
         }
 
-        root.Controls.Add(title, 0, 0);
-        root.Controls.Add(grid, 0, 1);
+        root.Controls.Add(_title, 0, 0);
+        root.Controls.Add(_grid, 0, 1);
         Controls.Add(root);
         RenderEmpty();
     }
@@ -163,6 +165,35 @@ internal sealed class TrafficStatisticsPanel : Panel
 
         LastSnapshot = null;
         RenderEmpty();
+    }
+
+    public void ApplyTheme()
+    {
+        BackColor = UiPalette.Card;
+        ForeColor = UiPalette.Ink;
+        _title.ForeColor = UiPalette.Ink;
+        _grid.BackColor = UiPalette.CardBorder;
+        _metricHeader.BackColor = UiPalette.AccentSoft;
+        _metricHeader.ForeColor = UiPalette.MutedInk;
+        _proxyHeader.BackColor = UiPalette.AccentSoft;
+        _proxyHeader.ForeColor = ProxyColor;
+        _directHeader.BackColor = UiPalette.AccentSoft;
+        _directHeader.ForeColor = DirectColor;
+        foreach (var label in _grid.Controls.OfType<Label>())
+        {
+            if (ReferenceEquals(label, _metricHeader) || ReferenceEquals(label, _proxyHeader) || ReferenceEquals(label, _directHeader))
+            {
+                continue;
+            }
+
+            label.BackColor = UiPalette.Card;
+            if (!_proxyValues.Contains(label) && !_directValues.Contains(label))
+            {
+                label.ForeColor = UiPalette.MutedInk;
+            }
+        }
+
+        Invalidate(invalidateChildren: true);
     }
 
     protected override void OnResize(EventArgs eventArgs)

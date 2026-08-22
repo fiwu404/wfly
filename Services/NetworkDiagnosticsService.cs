@@ -38,8 +38,8 @@ internal sealed class NetworkDiagnosticsService
 
             return new EgressCheckResult(
                 ipResult.Ip,
-                typeResult.NativeIpType,
-                typeResult.ResidentialIpType,
+                typeResult.IpSource,
+                typeResult.IpProperty,
                 latencyResult.Latency,
                 JoinErrors(ipResult.Error, typeResult.Error, latencyResult.Error),
                 useLocalProxy)
@@ -130,11 +130,8 @@ internal sealed class NetworkDiagnosticsService
                 return IpTypeLookupResult.Failure("分类服务未返回网络归属类型");
             }
 
-            var nativeIpType = TranslateNetworkType(networkType);
-            var residentialIpType = string.Equals(networkType, "Residential", StringComparison.OrdinalIgnoreCase)
-                ? "是"
-                : "否";
-            return new IpTypeLookupResult(nativeIpType, residentialIpType, null, null);
+            var (source, property) = TranslateNetworkType(networkType);
+            return new IpTypeLookupResult(source, property, null, null);
         }
         catch (OperationCanceledException)
         {
@@ -157,15 +154,15 @@ internal sealed class NetworkDiagnosticsService
             ? property.GetString()
             : null;
 
-    private static string TranslateNetworkType(string networkType) => networkType.Trim().ToLowerInvariant() switch
+    private static (string Source, string Property) TranslateNetworkType(string networkType) => networkType.Trim().ToLowerInvariant() switch
     {
-        "residential" => "住宅",
-        "business" => "企业",
-        "wireless" => "移动网络",
-        "hosting" => "数据中心",
-        "tor" => "Tor 出口",
-        "vpn" => "VPN",
-        _ => networkType,
+        "residential" => ("原生IP", "住宅IP"),
+        "wireless" => ("原生IP", "移动IP"),
+        "business" => ("广播IP", "企业IP"),
+        "hosting" => ("广播IP", "机房IP"),
+        "tor" => ("广播IP", "Tor出口"),
+        "vpn" => ("广播IP", "VPN出口"),
+        _ => ("广播IP", networkType),
     };
 
     private static async Task<(TimeSpan? Latency, string? Error)> MeasureGoogleAsync(HttpClient client, CancellationToken cancellationToken)
@@ -228,8 +225,8 @@ internal sealed class NetworkDiagnosticsService
     }
 
     private sealed record IpTypeLookupResult(
-        string NativeIpType,
-        string ResidentialIpType,
+        string IpSource,
+        string IpProperty,
         string? Error,
         string? DisplayError)
     {
@@ -243,8 +240,8 @@ internal sealed class NetworkDiagnosticsService
 
 internal sealed record EgressCheckResult(
     string? IpAddress,
-    string NativeIpType,
-    string ResidentialIpType,
+    string IpSource,
+    string IpProperty,
     TimeSpan? GoogleLatency,
     string? Error,
     bool UsedLocalProxy)
@@ -264,12 +261,12 @@ internal sealed record EgressCheckResult(
                 return $"检测失败：{IpTypeError}（可重试）";
             }
 
-            if (string.IsNullOrWhiteSpace(NativeIpType) || string.IsNullOrWhiteSpace(ResidentialIpType))
+            if (string.IsNullOrWhiteSpace(IpSource) || string.IsNullOrWhiteSpace(IpProperty))
             {
                 return "检测失败：分类结果不完整（可重试）";
             }
 
-            return $"原生 IP: {NativeIpType} · 住宅 IP: {ResidentialIpType}";
+            return $"{IpSource}:{IpProperty}";
         }
     }
 }

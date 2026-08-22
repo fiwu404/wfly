@@ -60,9 +60,14 @@ internal sealed class SiteLatencyTestService
             stopwatch.Stop();
             return new SiteLatencyResult(target.Name, target.Uri.Host, stopwatch.Elapsed, (int)response.StatusCode, null);
         }
-        catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
         {
             throw;
+        }
+        catch (OperationCanceledException)
+        {
+            stopwatch.Stop();
+            return new SiteLatencyResult(target.Name, target.Uri.Host, null, null, "请求超时");
         }
         catch (Exception exception) when (exception is HttpRequestException or TaskCanceledException or InvalidOperationException)
         {
@@ -86,4 +91,19 @@ internal sealed record SiteLatencyResult(
         : StatusCode is { } statusCode
             ? $"HTTP {statusCode}"
             : "未知";
+
+    /// <summary>
+    /// HTTP-level reachability only. A successful page response must not be
+    /// presented as proof that a logged-in streaming account can play content
+    /// in a particular region.
+    /// </summary>
+    public string UnlockStatusText => Error is not null
+        ? "不可访问"
+        : StatusCode is >= 200 and < 400
+            ? "网页可访问"
+            : StatusCode is 401 or 403 or 451
+                ? "访问受限"
+                : StatusCode is { } statusCode
+                    ? $"响应异常（HTTP {statusCode}）"
+                    : "未知";
 }

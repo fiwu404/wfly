@@ -14,6 +14,17 @@ internal sealed class ProxyNode
     public string CoreId { get; set; } = "sing-box";
     public string? ShareLink { get; set; }
     public string? ConfigurationJson { get; set; }
+    /// <summary>
+    /// WFly's lossless manual-editor state. Runtime profile generation still
+    /// consumes <see cref="ConfigurationJson"/>; this payload keeps optional
+    /// v2rayN-style fields that a particular core may not currently emit.
+    /// </summary>
+    public string? ManualOptionsJson { get; set; }
+    public string? PingResult { get; set; }
+    public string? TcpingResult { get; set; }
+    public string? RealConnectionResult { get; set; }
+    public string? UdpResult { get; set; }
+    public DateTimeOffset? LastTestedAt { get; set; }
     public bool IsEnabled { get; set; } = true;
     public DateTimeOffset CreatedAt { get; set; }
     public DateTimeOffset UpdatedAt { get; set; }

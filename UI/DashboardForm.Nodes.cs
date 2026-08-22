@@ -1,4 +1,5 @@
 using WFly.Models;
+using WFly.Services;
 using WFly.UI.Controls;
 using WFly.UI.Dialogs;
 
@@ -57,6 +58,13 @@ internal sealed partial class DashboardForm
         _groupGrid.Columns.Add("Interval", "更新时间");
         _groupGrid.Columns.Add("LastUpdated", "上次更新");
         _groupGrid.Columns.Add("Status", "状态");
+        // Keep the node-group header and its first few rows comfortably
+        // readable instead of leaving a thin, header-only strip above the
+        // otherwise empty data surface.
+        _groupGrid.ColumnHeadersHeightSizeMode = DataGridViewColumnHeadersHeightSizeMode.EnableResizing;
+        _groupGrid.ColumnHeadersHeight = 32;
+        _groupGrid.RowTemplate.Height = 30;
+        _groupGrid.MinimumSize = new Size(0, 240);
         _groupGrid.Dock = DockStyle.Fill;
         _groupGrid.Margin = Padding.Empty;
         _groupGrid.SelectionChanged += async (_, _) => await SelectGroupFromGridAsync();
@@ -93,7 +101,8 @@ internal sealed partial class DashboardForm
 
         var groupPanel = new FlowLayoutPanel { AutoSize = true, Margin = new Padding(0, 0, 0, 10), BackColor = UiPalette.Canvas };
         groupPanel.Controls.Add(new Label { Text = "节点组", AutoSize = true, Padding = new Padding(0, 7, 8, 0) });
-        _nodeGroupSelector = new ComboBox { DropDownStyle = ComboBoxStyle.DropDownList, Width = 260 };
+        _nodeGroupSelector = UiControlTheme.CreateComboBox();
+        _nodeGroupSelector.Width = 260;
         _nodeGroupSelector.SelectedIndexChanged += async (_, _) => await SelectGroupFromNodeSelectorAsync();
         groupPanel.Controls.Add(_nodeGroupSelector);
         groupPanel.Dock = DockStyle.Top;
@@ -104,26 +113,45 @@ internal sealed partial class DashboardForm
         add.Click += async (_, _) => await AddOrEditNodeAsync(null);
         var edit = CreateSecondaryButton("编辑节点");
         edit.Click += async (_, _) => await AddOrEditNodeAsync(GetSelectedNodeFromGrid());
-        var toggle = CreateSecondaryButton("启用/停用");
-        toggle.Click += async (_, _) => await ToggleSelectedNodeAsync();
+        var speedTest = CreateSecondaryButton("节点测速");
         var delete = CreateSecondaryButton("删除节点");
         delete.Click += async (_, _) => await DeleteSelectedNodeAsync();
         actions.Controls.Add(add);
         actions.Controls.Add(edit);
-        actions.Controls.Add(toggle);
+        actions.Controls.Add(speedTest);
         actions.Controls.Add(delete);
         actions.Dock = DockStyle.Top;
         content.Controls.Add(actions, 0, 2);
 
         _nodeGrid = CreateGrid();
+        _nodeGrid.MultiSelect = true;
         _nodeGrid.Columns.Add("Name", "节点");
         _nodeGrid.Columns.Add("Protocol", "协议");
-        _nodeGrid.Columns.Add("Core", "内核");
-        _nodeGrid.Columns.Add("Enabled", "启用");
-        _nodeGrid.Columns.Add("Updated", "更新时间");
+        _nodeGrid.Columns.Add("Address", "服务器");
+        _nodeGrid.Columns.Add("Port", "端口");
+        _nodeGrid.Columns.Add("Ping", "Ping");
+        _nodeGrid.Columns.Add("Tcping", "TCPing");
+        _nodeGrid.Columns.Add("RealConnection", "真连接");
+        _nodeGrid.Columns.Add("Udp", "UDP");
+        _nodeGrid.Columns["Name"].FillWeight = 150;
+        _nodeGrid.Columns["Protocol"].FillWeight = 85;
+        _nodeGrid.Columns["Address"].FillWeight = 150;
+        _nodeGrid.Columns["Port"].FillWeight = 65;
+        _nodeGrid.Columns["Ping"].FillWeight = 70;
+        _nodeGrid.Columns["Tcping"].FillWeight = 75;
+        _nodeGrid.Columns["RealConnection"].FillWeight = 85;
+        _nodeGrid.Columns["Udp"].FillWeight = 70;
+        _nodeGrid.ColumnHeadersHeightSizeMode = DataGridViewColumnHeadersHeightSizeMode.EnableResizing;
+        _nodeGrid.ColumnHeadersHeight = 32;
+        _nodeGrid.RowTemplate.Height = 30;
+        _nodeGrid.MinimumSize = new Size(0, 240);
         _nodeGrid.Dock = DockStyle.Fill;
         _nodeGrid.Margin = Padding.Empty;
         _nodeGrid.SelectionChanged += async (_, _) => await SelectNodeFromGridAsync();
+        _nodeGrid.CellMouseDown += OnNodeGridCellMouseDown;
+        _nodeTestMenu = CreateNodeTestMenu();
+        _nodeGrid.ContextMenuStrip = _nodeTestMenu;
+        speedTest.Click += (_, _) => _nodeTestMenu.Show(speedTest, new Point(0, speedTest.Height));
         content.Controls.Add(_nodeGrid, 0, 3);
         root.Controls.Add(content);
         return root;
@@ -182,12 +210,16 @@ internal sealed partial class DashboardForm
             _nodeGrid.Rows.Clear();
             foreach (var node in _currentNodes)
             {
+                var manual = ManualNodeConfiguration.Load(node.ManualOptionsJson, node.ConfigurationJson);
                 var rowIndex = _nodeGrid.Rows.Add(
                     node.Name,
                     node.Protocol,
-                    GetCoreDisplay(node.CoreId),
-                    node.IsEnabled ? "启用" : "停用",
-                    node.UpdatedAt.LocalDateTime.ToString("yyyy-MM-dd HH:mm"));
+                    string.IsNullOrWhiteSpace(manual.Server) ? "—" : manual.Server,
+                    manual.Port is > 0 and < 65536 ? manual.Port : "—",
+                    node.PingResult ?? "—",
+                    node.TcpingResult ?? "—",
+                    node.RealConnectionResult ?? "—",
+                    node.UdpResult ?? "—");
                 _nodeGrid.Rows[rowIndex].Tag = node.Id;
                 if (string.Equals(node.Id, _settings.SelectedNodeId, StringComparison.Ordinal))
                 {
@@ -362,7 +394,12 @@ internal sealed partial class DashboardForm
         }
 
         var seed = existing ?? new ProxyNode { GroupId = _settings.SelectedNodeGroupId ?? string.Empty, IsEnabled = true };
-        if (!ProxyNodeDialog.TryEdit(this, seed, _groups, out var draft))
+        if (!ProxyNodeDialog.TryEdit(
+            this,
+            seed,
+            _groups,
+            _subscriptionProfileService.ParseSingleShareLink,
+            out var draft))
         {
             return;
         }
@@ -395,6 +432,159 @@ internal sealed partial class DashboardForm
             await RefreshCurrentNodesAsync();
             PostLog("NODE", $"节点“{saved.Name}”已保存到“{owner.Name}”。");
         });
+    }
+
+    private ContextMenuStrip CreateNodeTestMenu()
+    {
+        var menu = new ContextMenuStrip
+        {
+            ShowImageMargin = false,
+            ShowCheckMargin = false,
+            AutoSize = true,
+            Padding = new Padding(5),
+            Renderer = new ToolStripProfessionalRenderer(new NodeTestMenuColorTable()),
+        };
+        menu.Items.Add(CreateNodeTestMenuItem("测试 Ping", NodeTestKind.Ping));
+        menu.Items.Add(CreateNodeTestMenuItem("测试 TCPing", NodeTestKind.Tcping));
+        menu.Items.Add(CreateNodeTestMenuItem("测试真连接", NodeTestKind.RealConnection));
+        menu.Items.Add(CreateNodeTestMenuItem("测试 UDP", NodeTestKind.Udp));
+        menu.Opening += (_, eventArgs) =>
+        {
+            var hasSelection = GetSelectedNodesFromGrid().Count > 0;
+            foreach (ToolStripItem item in menu.Items)
+            {
+                item.Enabled = hasSelection && !_operationBusy;
+                item.BackColor = UiPalette.Card;
+                item.ForeColor = UiPalette.Ink;
+                item.Padding = new Padding(12, 6, 24, 6);
+            }
+            menu.BackColor = UiPalette.Card;
+            menu.ForeColor = UiPalette.Ink;
+            if (!hasSelection) eventArgs.Cancel = true;
+        };
+        return menu;
+    }
+
+    private ToolStripMenuItem CreateNodeTestMenuItem(string text, NodeTestKind kind)
+    {
+        var item = new ToolStripMenuItem(text) { AutoSize = true };
+        item.Click += async (_, _) => await RunSelectedNodeTestAsync(kind);
+        return item;
+    }
+
+    private void OnNodeGridCellMouseDown(object? sender, DataGridViewCellMouseEventArgs eventArgs)
+    {
+        if (_nodeGrid is null || eventArgs.Button != MouseButtons.Right || eventArgs.RowIndex < 0)
+        {
+            return;
+        }
+
+        var row = _nodeGrid.Rows[eventArgs.RowIndex];
+        if (!row.Selected)
+        {
+            _nodeGrid.ClearSelection();
+            row.Selected = true;
+        }
+        if (eventArgs.ColumnIndex >= 0)
+        {
+            _nodeGrid.CurrentCell = row.Cells[eventArgs.ColumnIndex];
+        }
+    }
+
+    private IReadOnlyList<ProxyNode> GetSelectedNodesFromGrid()
+    {
+        if (_nodeGrid is null)
+        {
+            return [];
+        }
+
+        var ids = _nodeGrid.SelectedRows
+            .Cast<DataGridViewRow>()
+            .OrderBy(static row => row.Index)
+            .Select(static row => row.Tag as string)
+            .Where(static id => !string.IsNullOrWhiteSpace(id))
+            .ToHashSet(StringComparer.Ordinal);
+        if (ids.Count == 0 && _nodeGrid.CurrentRow?.Tag is string currentId)
+        {
+            ids.Add(currentId);
+        }
+        return _currentNodes.Where(node => ids.Contains(node.Id)).ToArray();
+    }
+
+    private async Task RunSelectedNodeTestAsync(NodeTestKind kind)
+    {
+        var nodes = GetSelectedNodesFromGrid();
+        if (nodes.Count == 0)
+        {
+            return;
+        }
+
+        var display = kind switch
+        {
+            NodeTestKind.Ping => "Ping",
+            NodeTestKind.Tcping => "TCPing",
+            NodeTestKind.RealConnection => "真连接",
+            _ => "UDP",
+        };
+        await RunOperationAsync($"正在测试 {nodes.Count} 个节点的 {display}…", async cancellationToken =>
+        {
+            var progress = new Progress<NodeTestUpdate>(ApplyNodeTestUpdate);
+            await _nodeSpeedTestService.TestAsync(kind, nodes, progress, cancellationToken);
+            await Task.Yield();
+            foreach (var node in nodes)
+            {
+                await _proxyNodeStore.SaveAsync(node, cancellationToken);
+            }
+            await RefreshCurrentNodesAsync();
+            RefreshNodesPage();
+            PostLog("TEST", $"已完成 {nodes.Count} 个节点的 {display} 测试。");
+        });
+    }
+
+    private void ApplyNodeTestUpdate(NodeTestUpdate update)
+    {
+        var node = _currentNodes.FirstOrDefault(item => string.Equals(item.Id, update.NodeId, StringComparison.Ordinal));
+        if (node is null)
+        {
+            return;
+        }
+
+        var columnName = update.Kind switch
+        {
+            NodeTestKind.Ping => "Ping",
+            NodeTestKind.Tcping => "Tcping",
+            NodeTestKind.RealConnection => "RealConnection",
+            _ => "Udp",
+        };
+        switch (update.Kind)
+        {
+            case NodeTestKind.Ping:
+                node.PingResult = update.Display;
+                break;
+            case NodeTestKind.Tcping:
+                node.TcpingResult = update.Display;
+                break;
+            case NodeTestKind.RealConnection:
+                node.RealConnectionResult = update.Display;
+                break;
+            case NodeTestKind.Udp:
+                node.UdpResult = update.Display;
+                break;
+        }
+        if (update.Completed) node.LastTestedAt = DateTimeOffset.UtcNow;
+
+        if (_nodeGrid is null || !_nodeGrid.Columns.Contains(columnName))
+        {
+            return;
+        }
+        foreach (DataGridViewRow row in _nodeGrid.Rows)
+        {
+            if (row.Tag is string id && string.Equals(id, update.NodeId, StringComparison.Ordinal))
+            {
+                row.Cells[columnName].Value = update.Display;
+                break;
+            }
+        }
     }
 
     private async Task ToggleSelectedNodeAsync()
@@ -472,4 +662,17 @@ internal sealed partial class DashboardForm
     {
         public override string ToString() => Name;
     }
+}
+
+internal sealed class NodeTestMenuColorTable : ProfessionalColorTable
+{
+    public override Color MenuBorder => UiPalette.CardBorder;
+    public override Color MenuItemBorder => UiPalette.Accent;
+    public override Color MenuItemSelected => UiPalette.AccentSoft;
+    public override Color MenuItemSelectedGradientBegin => UiPalette.AccentSoft;
+    public override Color MenuItemSelectedGradientEnd => UiPalette.AccentSoft;
+    public override Color ToolStripDropDownBackground => UiPalette.Card;
+    public override Color ImageMarginGradientBegin => UiPalette.Card;
+    public override Color ImageMarginGradientMiddle => UiPalette.Card;
+    public override Color ImageMarginGradientEnd => UiPalette.Card;
 }
